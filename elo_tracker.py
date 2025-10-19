@@ -91,46 +91,58 @@ class WeekKey(SQLModel, table=True):
     results_password: str
 
 # =============== Database ===============
-engine = create_engine(f"sqlite:///{DB_PATH}", echo=False, connect_args={"check_same_thread": False})
+
+@st.cache_resource
+def get_engine():
+    import os
+    DB_URL = st.secrets.get("DATABASE_URL", os.getenv("DATABASE_URL"))
+    if DB_URL:
+        # Postgres (or any SQLAlchemy URL) path
+        return create_engine(DB_URL, echo=False)
+    # Fallback to local SQLite (dev)
+    from sqlalchemy import event
+    eng = create_engine(f"sqlite:///{DB_PATH}", echo=False, connect_args={"check_same_thread": False})
+    try:
+        @event.listens_for(eng, "connect")
+        def set_sqlite_pragma(dbapi_connection, connection_record):
+            cur = dbapi_connection.cursor()
+            cur.execute("PRAGMA journal_mode=WAL;")
+            cur.execute("PRAGMA synchronous=NORMAL;")
+            cur.close()
+    except Exception:
+        pass
+    return eng
+
+engine = get_engine()
 
 SQLModel.metadata.create_all(engine)
 
-# Lightweight migrations for legacy DBs (and explicit table names)
-with engine.connect() as _conn:
-    # Helper: detect table existence
-    existing = {r[0] for r in _conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-
-    # Rename legacy tables to explicit names if needed
-    # player -> players
-    if "player" in existing and "players" not in existing:
-        _conn.exec_driver_sql('ALTER TABLE "player" RENAME TO "players"')
-        existing.add("players")
-    # match -> matches (avoid reserved word / conflicts)
-    if "match" in existing and "matches" not in existing:
-        _conn.exec_driver_sql('ALTER TABLE "match" RENAME TO "matches"')
-        existing.add("matches")
-    # weekkey -> week_keys
-    if "weekkey" in existing and "week_keys" not in existing:
-        _conn.exec_driver_sql('ALTER TABLE "weekkey" RENAME TO "week_keys"')
-        existing.add("week_keys")
-
-    # Ensure columns exist on players
-    cols_players = [r[1] for r in _conn.exec_driver_sql('PRAGMA table_info("players")').fetchall()] if "players" in existing else []
-    if "active" not in cols_players and "players" in existing:
-        _conn.exec_driver_sql('ALTER TABLE "players" ADD COLUMN active BOOLEAN DEFAULT 1')
-    if "faction" not in cols_players and "players" in existing:
-        _conn.exec_driver_sql('ALTER TABLE "players" ADD COLUMN faction TEXT')
-
-    # Ensure columns exist on matches
-    cols_matches = [r[1] for r in _conn.exec_driver_sql('PRAGMA table_info("matches")').fetchall()] if "matches" in existing else []
-    if "k_factor_used" not in cols_matches and "matches" in existing:
-        _conn.exec_driver_sql('ALTER TABLE "matches" ADD COLUMN k_factor_used INTEGER')
-    if "a_faction" not in cols_matches and "matches" in existing:
-        _conn.exec_driver_sql('ALTER TABLE "matches" ADD COLUMN a_faction TEXT')
-    if "b_faction" not in cols_matches and "matches" in existing:
-        _conn.exec_driver_sql('ALTER TABLE "matches" ADD COLUMN b_faction TEXT')
-
-    _conn.commit()
+# Run lightweight migrations only for SQLite (PRAGMA etc. are SQLite-specific)
+try:
+    if str(engine.url).startswith("sqlite:///"):
+        with engine.connect() as _conn:
+            existing = {r[0] for r in _conn.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            if "player" in existing and "players" not in existing:
+                _conn.exec_driver_sql('ALTER TABLE "player" RENAME TO "players"'); existing.add("players")
+            if "match" in existing and "matches" not in existing:
+                _conn.exec_driver_sql('ALTER TABLE "match" RENAME TO "matches"'); existing.add("matches")
+            if "weekkey" in existing and "week_keys" not in existing:
+                _conn.exec_driver_sql('ALTER TABLE "weekkey" RENAME TO "week_keys"'); existing.add("week_keys")
+            cols_players = [r[1] for r in _conn.exec_driver_sql('PRAGMA table_info("players")').fetchall()] if "players" in existing else []
+            if "active" not in cols_players and "players" in existing:
+                _conn.exec_driver_sql('ALTER TABLE "players" ADD COLUMN active BOOLEAN DEFAULT 1')
+            if "faction" not in cols_players and "players" in existing:
+                _conn.exec_driver_sql('ALTER TABLE "players" ADD COLUMN faction TEXT')
+            cols_matches = [r[1] for r in _conn.exec_driver_sql('PRAGMA table_info("matches")').fetchall()] if "matches" in existing else []
+            if "k_factor_used" not in cols_matches and "matches" in existing:
+                _conn.exec_driver_sql('ALTER TABLE "matches" ADD COLUMN k_factor_used INTEGER')
+            if "a_faction" not in cols_matches and "matches" in existing:
+                _conn.exec_driver_sql('ALTER TABLE "matches" ADD COLUMN a_faction TEXT')
+            if "b_faction" not in cols_matches and "matches" in existing:
+                _conn.exec_driver_sql('ALTER TABLE "matches" ADD COLUMN b_faction TEXT')
+            _conn.commit()
+except Exception:
+    pass
 
 # =============== ELO helpers ===============
 def expected_score(rp: float, ro: float) -> float:
