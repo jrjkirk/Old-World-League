@@ -702,14 +702,12 @@ with T[idx["Leaderboard"]]:
         if not show_archived:
             q = q.where(Player.active == True)
         players = s.exec(q.order_by(Player.rating.desc())).all()
-        
-
-            rows_lead = _fetch_leaderboard_rows()
+        rows_lead = _fetch_leaderboard_rows()
         if rows_lead:
             records = {r["id"]: (r["wins"], r["draws"], r["losses"]) for r in rows_lead}
         else:
             records = _wdl_map_via_db()
-if players:
+    if players:
         pref_map = faction_preference_map()
         rows = [
             {
