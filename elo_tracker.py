@@ -122,41 +122,6 @@ def init_db():
     return True
 
 _ = init_db()
-# =============== Cache warming (speeds up first tab switches) ===============
-from concurrent.futures import ThreadPoolExecutor
-
-def _warm_one(fn, *args, **kwargs):
-    try:
-        fn(*args, **kwargs)
-    except Exception:
-        # best-effort; ignore individual failures
-        pass
-
-@st.cache_resource(show_spinner=False)
-def warm_caches_async(nonce: int = 0):
-    """Pre-populate frequently used @st.cache_data queries in parallel.
-
-    The 'nonce' parameter allows forcing a re-warm after mutations; changing it
-    invalidates this cached resource so the function runs again.
-    """
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        # Warm common snapshots both with and without archived players
-        ex.submit(_warm_one, list_players_snapshot, True)
-        ex.submit(_warm_one, list_players_snapshot, False)
-        # Faction preferences tend to be used on multiple tabs
-        ex.submit(_warm_one, faction_preference_map)
-
-    # Return something tiny but useful for debugging
-    return {"ok": True, "nonce": nonce}
-
-# Warm once on first load (non-blocking to the user due to cache + small workload)
-if "_warm_nonce" not in st.session_state:
-    st.session_state["_warm_nonce"] = 0
-try:
-    warm_caches_async(st.session_state["_warm_nonce"])
-except Exception:
-    pass
-
 
 # Run lightweight migrations only for SQLite (PRAGMA etc. are SQLite-specific)
 try:
@@ -206,18 +171,9 @@ def _player_id(p) -> int:
 
 
 def invalidate_caches():
-    """Clear cached data AND immediately re-warm hot caches so the next rerun is snappy."""
     try:
         st.cache_data.clear()
     except Exception:
-        pass
-    # bump a nonce so our cached resource runs again
-    _n = st.session_state.get("_warm_nonce", 0) + 1
-    st.session_state["_warm_nonce"] = _n
-    try:
-        warm_caches_async(_n)
-    except Exception:
-        # Non-fatal: warming is best-effort
         pass
 
 # ---- Cached fetchers (performance, non-functional) ----
@@ -613,12 +569,6 @@ with st.sidebar:
                 st.download_button("Download DB", data=data, file_name=DB_PATH, mime="application/octet-stream", use_container_width=True)
         except Exception:
             pass
-if st.session_state.get("is_admin"):
-    if st.button("Re-warm caches", use_container_width=True, key="btn_rewarm"):
-        _n = st.session_state.get("_warm_nonce", 0) + 1
-        st.session_state["_warm_nonce"] = _n
-        warm_caches_async(_n)
-        st.success("Caches warmed.")
     sidebar_sponsor()
 
 # =============== Tabs ===============
