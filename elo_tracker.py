@@ -751,11 +751,12 @@ if st.session_state.get("is_admin", False) and "Pairings" in idx:
         c1, c2, c3 = st.columns(3)
         with c1:
             st.caption("Week ID uses the **Wednesday** of the week (DD/MM/YYYY).")
-        with c2:
-            week_str = st.text_input("Week id", value=week_id_wed(date.today()))
-        with c3: 
-            generate = st.button("Generate pairings", key="btn_generate_pairings")
-
+        with st.form("pairings_generate_form", clear_on_submit=False):
+            c2, c3 = st.columns([2,1])
+            with c2:
+                week_str = st.text_input("Week id", value=week_id_wed(date.today()))
+            with c3:
+                generate = st.form_submit_button("Generate pairings")
         # Inline reset controls for the same week (tidier UI)
         with Session(engine) as s:
             _ms = s.exec(select(Match).where(Match.week == week_str)).all()
@@ -765,7 +766,9 @@ if st.session_state.get("is_admin", False) and "Pairings" in idx:
         with colr1:
             include_reported = st.checkbox("Also delete reported (irrevocable)", value=False, key="reset_include_reported")
         with colr2:
-            if st.button("Reset pairings for this week", key="btn_reset_pairings"):
+            with st.form("reset_pairings_form", clear_on_submit=False):
+                do_reset = st.form_submit_button("Reset pairings for this week")
+            if do_reset:
                 with Session(engine) as s:
                     ms = s.exec(select(Match).where(Match.week == week_str)).all()
                     for m in ms:
@@ -941,54 +944,79 @@ if st.session_state.get("is_admin", False) and "Pairings" in idx:
 # =============== Ad-Hoc Match (admin) ===============
 if st.session_state.get("is_admin", False) and "Ad-Hoc Match" in idx:
     with T[idx["Ad-Hoc Match"]]:
+
         st.subheader("Ad-Hoc Match")
+
         adhoc_week = st.text_input("Week for ad-hoc", value=week_id_wed(date.today()), key="adhoc_w")
         include_arch = st.checkbox("Include archived players", value=False, key="adhoc_arch")
+
         plist = list_players_snapshot(include_arch)
-        if not plist: st.info("No players available.")
+        if not plist:
+            st.info("No players available.")
         else:
             labels = [_player_label(p) for p in plist]
             id_by_label = {labels[i]: _player_id(plist[i]) for i in range(len(plist))}
-            c1, c2 = st.columns(2)
-            with c1: la = st.selectbox("Player A", options=labels, key="adhoc_a")
-            with c2: lb = st.selectbox("Player B", options=labels, key="adhoc_b")
-            k_choice2 = st.radio("K-factor", ["Casual (10)", "Competitive (40)"], index=1, horizontal=True, key="adhoc_k")
-            result2 = st.selectbox("Result", ["a_win", "b_win", "draw"], index=0, key="adhoc_r")
+            pref_map = faction_preference_map()
 
-            factions = PLACEHOLDER_FACTIONS
-            # Default faction pickers to the players' saved faction (or blank)
-            with Session(engine) as s:
-                pa_tmp = s.get(Player, id_by_label[la]); pb_tmp = s.get(Player, id_by_label[lb])
-            a_most = pref_map.get(pa_tmp.id) if pa_tmp else None
+            with st.form("adhoc_form", clear_on_submit=True):
+                c1, c2 = st.columns(2)
+                with c1:
+                    la = st.selectbox("Player A", options=labels, key="adhoc_a")
+                with c2:
+                    lb = st.selectbox("Player B", options=labels, key="adhoc_b")
 
-            b_most = pref_map.get(pb_tmp.id) if pb_tmp else None
+                k_choice2 = st.radio("K-factor", ["Casual (10)", "Competitive (40)"], index=1, horizontal=True, key="adhoc_k")
+                result2 = st.selectbox("Result", ["a_win", "b_win", "draw"], index=0, key="adhoc_r")
 
-            a_def_idx = (factions.index(a_most) if (a_most in factions) else (factions.index(pa_tmp.faction) if (pa_tmp and pa_tmp.faction in factions) else 0))
+                factions = PLACEHOLDER_FACTIONS
+                pid_a = id_by_label[la]; pid_b = id_by_label[lb]
+                pa_tmp = next((p for p in plist if _player_id(p) == pid_a), None)
+                pb_tmp = next((p for p in plist if _player_id(p) == pid_b), None)
 
-            b_def_idx = (factions.index(b_most) if (b_most in factions) else (factions.index(pb_tmp.faction) if (pb_tmp and pb_tmp.faction in factions) else 0))
-            a_faction2 = st.selectbox("Player A faction", PLACEHOLDER_FACTIONS_WITH_BLANK, index=a_def_idx, key="adhoc_af")
-            b_faction2 = st.selectbox("Player B faction", PLACEHOLDER_FACTIONS_WITH_BLANK, index=b_def_idx, key="adhoc_bf")
-            a_faction2 = None if a_faction2 == "— None —" else a_faction2
-            b_faction2 = None if b_faction2 == "— None —" else b_faction2
-            disabled = (la == lb)
-            if disabled:
-                st.caption("Players must differ.")
-            if st.button("Save ad-hoc result", key="btn_save_adhoc", disabled=disabled):
+                a_most = pref_map.get(pid_a) if pa_tmp else None
+                b_most = pref_map.get(pid_b) if pb_tmp else None
+
+                def_val_a = (a_most if a_most in factions else (pa_tmp.get("faction") if isinstance(pa_tmp, dict) else None))
+                def_val_b = (b_most if b_most in factions else (pb_tmp.get("faction") if isinstance(pb_tmp, dict) else None))
+
+                a_def_idx = _faction_index_or_blank(def_val_a)
+                b_def_idx = _faction_index_or_blank(def_val_b)
+
+                a_faction2 = st.selectbox("Player A faction", PLACEHOLDER_FACTIONS_WITH_BLANK, index=a_def_idx, key="adhoc_af")
+                b_faction2 = st.selectbox("Player B faction", PLACEHOLDER_FACTIONS_WITH_BLANK, index=b_def_idx, key="adhoc_bf")
+                a_faction2 = None if a_faction2 == "— None —" else a_faction2
+                b_faction2 = None if b_faction2 == "— None —" else b_faction2
+
+                disabled = (la == lb)
+                if disabled:
+                    st.caption("Players must differ.")
+
+                submitted = st.form_submit_button("Save ad-hoc result", disabled=disabled)
+
+            if submitted:
                 with Session(engine) as s3:
-                    pid_a = id_by_label[la]; pid_b = id_by_label[lb]
-                    pa = s3.get(Player, pid_a); pb = s3.get(Player, pid_b)
-                    m = Match(week=adhoc_week, player_a_id=pid_a, player_b_id=pid_b, result="pending", a_rating_before=pa.rating, b_rating_before=pb.rating, a_faction=a_faction2, b_faction=b_faction2)
+                    pa = s3.get(Player, pid_a)
+                    pb = s3.get(Player, pid_b)
+                    m = Match(
+                        week=adhoc_week,
+                        player_a_id=pid_a,
+                        player_b_id=pid_b,
+                        result="pending",
+                        a_rating_before=pa.rating, b_rating_before=pb.rating,
+                        a_faction=a_faction2, b_faction=b_faction2
+                    )
                     s3.add(m); s3.commit(); s3.refresh(m)
-                    k = 10 if k_choice2.startswith("Casual") else 40; score_a = 1.0 if result2 == "a_win" else 0.0 if result2 == "b_win" else 0.5
+
+                    k = 10 if k_choice2.startswith("Casual") else 40
+                    score_a = 1.0 if result2 == "a_win" else 0.0 if result2 == "b_win" else 0.5
                     new_a, new_b = update_elo(pa.rating, pb.rating, score_a, k)
-                    m.result = result2; m.a_rating_after = new_a; m.b_rating_after = new_b; m.k_factor_used = int(k); m.reported_at = datetime.utcnow()
-                    pa.rating = new_a; pb.rating = new_b; s3.add(pa); s3.add(pb); s3.add(m); s3.commit()
-                    invalidate_caches()
-                    st.success(f"Ad-hoc match saved (K={k}). Match {m.id}.")
 
+                    m.result = result2
+                    m.a_rating_after = new_a; m.b_rating_after = new_b
+                    m.k_factor_used = int(k); m.reported_at = datetime.utcnow()
+                    pa.rating = new_a; pb.rating = new_b
 
+                    s3.add(pa); s3.add(pb); s3.add(m); s3.commit()
 
-def clear_week_password(session: Session, week: str) -> None:
-    wk = session.exec(select(WeekKey).where(WeekKey.week == week)).first()
-    if wk:
-        session.delete(wk); session.commit()
+                invalidate_caches()
+                st.success(f"Ad-hoc match saved (K={k}). Match {m.id}.")
