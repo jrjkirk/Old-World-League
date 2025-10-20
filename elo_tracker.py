@@ -929,6 +929,7 @@ if st.session_state.get("is_admin", False) and "Players" in idx:
                     invalidate_caches()
                     st.success("Faction updated.")
         with st.expander("Archive / Restore Player", expanded=False):
+            with st.form("archive_restore_form", clear_on_submit=False):
                     with Session(engine) as s:
                         all_players = s.exec(select(Player).order_by(Player.name)).all()
                     if not all_players:
@@ -941,13 +942,13 @@ if st.session_state.get("is_admin", False) and "Players" in idx:
                             p = s.get(Player, pid)
                         c1, c2 = st.columns(2)
                         with c1:
-                            if p and p.active and st.button("Archive", use_container_width=True, key="btn_archive_player"):
+                            if p and p.active and st.form_submit_button("Archive", use_container_width=True, key="btn_archive_player"):
                                 with Session(engine) as s:
                                     p = s.get(Player, pid); p.active = False; s.add(p); s.commit()
                                 invalidate_caches()
                                 st.success("Archived."); st.rerun()
                         with c2:
-                            if p and (not p.active) and st.button("Restore", use_container_width=True, key="btn_restore_player"):
+                            if p and (not p.active) and st.form_submit_button("Restore", use_container_width=True, key="btn_restore_player"):
                                 with Session(engine) as s:
                                     p = s.get(Player, pid); p.active = True; s.add(p); s.commit()
                                 invalidate_caches()
@@ -967,12 +968,14 @@ if st.session_state.get("is_admin", False) and "Players" in idx:
                             matches_num = len(m_count)
                             attend_num = len(a_count)
                         st.write(f"Related records — Matches: **{matches_num}**, Attendance: **{attend_num}**.")
+                        with st.form("delete_player_now_form", clear_on_submit=False):
                         col_del1, col_del2 = st.columns([1,2])
                         with col_del1:
                             hard_delete = st.checkbox("Also delete all related matches & attendance", value=False, key="del_player_hard")
                         with col_del2:
                             confirm_text = st.text_input('Type **DELETE** to confirm', key="del_player_confirm")
-                        if st.button("Delete player now", type="primary", key="btn_delete_player_now", disabled=(confirm_text.strip().upper() != "DELETE")):
+                        submitted_delete = st.form_submit_button("Delete player now", type="primary", key="btn_delete_player_now", disabled=(confirm_text.strip().upper() != "DELETE"))
+                    if submitted_delete:
                             with Session(engine) as s:
                                 if hard_delete:
                                     for mm in s.exec(select(Match).where((Match.player_a_id == sel_id) | (Match.player_b_id == sel_id))).all():
