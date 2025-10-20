@@ -122,6 +122,41 @@ def init_db():
     return True
 
 _ = init_db()
+# =============== Cache warming (speeds up first tab switches) ===============
+from concurrent.futures import ThreadPoolExecutor
+
+def _warm_one(fn, *args, **kwargs):
+    try:
+        fn(*args, **kwargs)
+    except Exception:
+        # best-effort; ignore individual failures
+        pass
+
+@st.cache_resource(show_spinner=False)
+def warm_caches_async(nonce: int = 0):
+    """Pre-populate frequently used @st.cache_data queries in parallel.
+
+    The 'nonce' parameter allows forcing a re-warm after mutations; changing it
+    invalidates this cached resource so the function runs again.
+    """
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        # Warm common snapshots both with and without archived players
+        ex.submit(_warm_one, list_players_snapshot, True)
+        ex.submit(_warm_one, list_players_snapshot, False)
+        # Faction preferences tend to be used on multiple tabs
+        ex.submit(_warm_one, faction_preference_map)
+
+    # Return something tiny but useful for debugging
+    return {"ok": True, "nonce": nonce}
+
+# Warm once on first load (non-blocking to the user due to cache + small workload)
+if "_warm_nonce" not in st.session_state:
+    st.session_state["_warm_nonce"] = 0
+try:
+    warm_caches_async(st.session_state["_warm_nonce"])
+except Exception:
+    pass
+
 
 # Run lightweight migrations only for SQLite (PRAGMA etc. are SQLite-specific)
 try:
@@ -170,20 +205,19 @@ def _player_id(p) -> int:
     return p['id'] if isinstance(p, dict) else p.id
 
 
-
 def invalidate_caches():
-    """Clear cached data and trigger a background re-warm so the next rerun is fast."""
+    """Clear cached data AND immediately re-warm hot caches so the next rerun is snappy."""
     try:
         st.cache_data.clear()
     except Exception:
         pass
-    # bump a nonce so our cached warm routine runs again
+    # bump a nonce so our cached resource runs again
     _n = st.session_state.get("_warm_nonce", 0) + 1
     st.session_state["_warm_nonce"] = _n
-    # best-effort: warm if available
     try:
         warm_caches_async(_n)
     except Exception:
+        # Non-fatal: warming is best-effort
         pass
 
 # ---- Cached fetchers (performance, non-functional) ----
@@ -290,35 +324,6 @@ def faction_preference_map() -> dict[int, str | None]:
                 )[0][0]
 
         return pref
-
-
-@st.cache_resource(show_spinner=False)
-def warm_caches_async(nonce: int = 0):
-    """Pre-populate frequently used @st.cache_data queries in parallel.
-
-    The 'nonce' parameter allows forcing a re-warm after mutations; changing it
-    invalidates this cached resource so the function runs again.
-    """
-    try:
-        from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=4) as ex:
-            # Warm common snapshots both with and without archived players
-            ex.submit(list_players_snapshot, True)
-            ex.submit(list_players_snapshot, False)
-            # Faction preferences used across tabs
-            ex.submit(faction_preference_map)
-    except Exception:
-        # warming is best-effort
-        pass
-    return {"ok": True, "nonce": nonce}
-
-# First-load warm (only runs once thanks to @st.cache_resource)
-if "_warm_nonce" not in st.session_state:
-    st.session_state["_warm_nonce"] = 0
-try:
-    warm_caches_async(st.session_state["_warm_nonce"])
-except Exception:
-    pass
 def _score_from_result(result: str) -> float:
     if result == "a_win":
         return 1.0
@@ -608,6 +613,12 @@ with st.sidebar:
                 st.download_button("Download DB", data=data, file_name=DB_PATH, mime="application/octet-stream", use_container_width=True)
         except Exception:
             pass
+if st.session_state.get("is_admin"):
+    if st.button("Re-warm caches", use_container_width=True, key="btn_rewarm"):
+        _n = st.session_state.get("_warm_nonce", 0) + 1
+        st.session_state["_warm_nonce"] = _n
+        warm_caches_async(_n)
+        st.success("Caches warmed.")
     sidebar_sponsor()
 
 # =============== Tabs ===============
@@ -619,49 +630,10 @@ T = st.tabs(order)
 
 # =============== Leaderboard ===============
 
-# --- Fast-path: fetch W/D/L via DB function (fallback to local) ---
-@st.cache_data(ttl=60, show_spinner=False)
-def _wdl_map_via_db() -> dict[int, tuple[int,int,int]]:
-    """Return {player_id: (wins, draws, losses)} using SQL function public.player_wdl().
-    Falls back to local computation if the function isn't available.
-    """
-    try:
-        from sqlalchemy import text as _sqltext
-        with Session(engine) as _s:
-            # Call the helper first; many setups will only have player_wdl()
-            rows = _s.exec(_sqltext("select * from public.player_wdl()")).all()
-            if rows:
-                out = {}
-                # rows may be Row objects or tuples depending on driver
-                for r in rows:
-                    try:
-                        pid = int(r.player_id)
-                        w = int(r.wins); d = int(r.draws); l = int(r.losses)
-                    except Exception:
-                        pid, w, d, l = int(r[0]), int(r[1]), int(r[2]), int(r[3])
-                    out[pid] = (w, d, l)
-                return out
-    except Exception:
-        pass
-    # Fallbacks identical to previous behavior
-    try:
-        return player_records_all()  # if present
-    except Exception:
-        pass
-    try:
-        with Session(engine) as _s:
-            ids = [p.id for p in _s.exec(select(Player)).all()]
-        return {pid: (*cached_player_record(pid),) for pid in ids}
-    except Exception:
-        return {}
-
-
 # --- Single-call Leaderboard fetch (id, name, rating, wins, draws, losses) ---
 @st.cache_data(ttl=60, show_spinner=False)
 def _fetch_leaderboard_rows():
-    """Return a list of rows from public.leaderboard_rows(), or [] on failure.
-    Each row has keys: id, name, rating, wins, draws, losses.
-    """
+    """Return a list of rows from public.leaderboard_rows(), or [] on failure."""
     try:
         from sqlalchemy import text as _sqltext
         with Session(engine) as _s:
@@ -702,10 +674,9 @@ with T[idx["Leaderboard"]]:
         
 rows_lead = _fetch_leaderboard_rows()
 if rows_lead:
-    # Build records dict from single-call results (UI expects {id: (w,d,l)})
     records = {r["id"]: (r["wins"], r["draws"], r["losses"]) for r in rows_lead}
 else:
-    records = _wdl_map_via_db()
+    records = {p.id: (*cached_player_record(p.id),) for p in players}
 
     if players:
         pref_map = faction_preference_map()
@@ -740,15 +711,9 @@ else:
 with T[idx["Data"]]:
     st.subheader("History")
     with Session(engine) as s:
-        # Order by reported_at (timestamp) for true recency; stable tiebreak by id
-        try:
-            matches = s.exec(select(Match).order_by(Match.reported_at.desc(), Match.id.desc())).all()
-        except Exception:
-            # Fallback to legacy week ordering if needed
-            matches = s.exec(select(Match).order_by(Match.week.desc(), Match.id.desc())).all()
+        matches = s.exec(select(Match).order_by(Match.week.desc(), Match.id.desc())).all()
         pmap = get_player_map(s)
         pref_map = faction_preference_map()
-
     if matches:
         rows = [{
             "Match ID": m.id,
