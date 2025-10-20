@@ -968,13 +968,13 @@ if st.session_state.get("is_admin", False) and "Players" in idx:
                             matches_num = len(m_count)
                             attend_num = len(a_count)
                         st.write(f"Related records — Matches: **{matches_num}**, Attendance: **{attend_num}**.")
-                        with st.form("delete_player_now_form", clear_on_submit=False):
+                                                with st.form("delete_player_now_form", clear_on_submit=False):
                             col_del1, col_del2 = st.columns([1,2])
-                        with col_del1:
-                            hard_delete = st.checkbox("Also delete all related matches & attendance", value=False, key="del_player_hard")
-                        with col_del2:
-                            confirm_text = st.text_input('Type **DELETE** to confirm', key="del_player_confirm")
-                        submitted_delete = st.form_submit_button("Delete player now", type="primary", key="btn_delete_player_now", disabled=(confirm_text.strip().upper() != "DELETE"))
+                            with col_del1:
+                                hard_delete = st.checkbox("Also delete all related matches & attendance", value=False, key="del_player_hard")
+                            with col_del2:
+                                confirm_text = st.text_input('Type **DELETE** to confirm', key="del_player_confirm")
+                            submitted_delete = st.form_submit_button("Delete player now", type="primary", key="btn_delete_player_now", disabled=(confirm_text.strip().upper() != "DELETE"))
                     if submitted_delete:
                             with Session(engine) as s:
                                 if hard_delete:
@@ -1104,7 +1104,7 @@ if st.session_state.get("is_admin", False) and "Pairings" in idx:
             all_matches = s.exec(select(Match).where(Match.week == lookup).order_by(Match.id)).all(); pmap = get_player_map(s)
         pending_matches = [m for m in all_matches if m.result == "pending"]
         if pending_matches:
-            rows = [{"Match ID": m.id, "A": f"{pmap[m.player_a_id].name} (#{m.player_a_id})", "B": (f"{pmap[m.player_b_id].name} (#{m.player_b_id})" if m.player_b_id else "BYE"), "Result": m.result} for m in matches]
+            rows = [{"Match ID": m.id, "A": f"{pmap[m.player_a_id].name} (#{m.player_a_id})", "B": (f"{pmap[m.player_b_id].name} (#{m.player_b_id})" if m.player_b_id else "BYE"), "Result": m.result} for m in pending_matches]
             st.dataframe(rows, use_container_width=True, hide_index=True)
 
             # Inline delete control for no-shows
