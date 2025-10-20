@@ -769,7 +769,7 @@ with T[idx["Data"]]:
             "B Before": (round(m.b_rating_before,1) if m.b_rating_before is not None else None),
             "A After": (round(m.a_rating_after,1) if m.a_rating_after is not None else None),
             "B After": (round(m.b_rating_after,1) if m.b_rating_after is not None else None)
-        } for m in pending_matches]
+        } for m in matches]
         st.dataframe(rows, use_container_width=True, hide_index=True, column_config={"Rating": st.column_config.NumberColumn(format="%.1f"), "GP": st.column_config.NumberColumn(format="%d"), "W": st.column_config.NumberColumn(format="%d"), "D": st.column_config.NumberColumn(format="%d"), "L": st.column_config.NumberColumn(format="%d")})
     else: st.info("No matches recorded yet.")
 
@@ -1080,7 +1080,7 @@ if st.session_state.get("is_admin", False) and "Pairings" in idx:
             all_matches = s.exec(select(Match).where(Match.week == lookup).order_by(Match.id)).all(); pmap = get_player_map(s)
         pending_matches = [m for m in all_matches if m.result == "pending"]
         if pending_matches:
-            rows = [{"Match ID": m.id, "A": f"{pmap[m.player_a_id].name} (#{m.player_a_id})", "B": (f"{pmap[m.player_b_id].name} (#{m.player_b_id})" if m.player_b_id else "BYE"), "Result": m.result} for m in pending_matches]
+            rows = [{"Match ID": m.id, "A": f"{pmap[m.player_a_id].name} (#{m.player_a_id})", "B": (f"{pmap[m.player_b_id].name} (#{m.player_b_id})" if m.player_b_id else "BYE"), "Result": m.result} for m in matches]
             st.dataframe(rows, use_container_width=True, hide_index=True)
 
             # Inline delete control for no-shows
