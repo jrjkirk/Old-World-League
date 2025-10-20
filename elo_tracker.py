@@ -170,9 +170,19 @@ def _player_id(p) -> int:
     return p['id'] if isinstance(p, dict) else p.id
 
 
+
 def invalidate_caches():
+    """Clear cached data and trigger a background re-warm so the next rerun is fast."""
     try:
         st.cache_data.clear()
+    except Exception:
+        pass
+    # bump a nonce so our cached warm routine runs again
+    _n = st.session_state.get("_warm_nonce", 0) + 1
+    st.session_state["_warm_nonce"] = _n
+    # best-effort: warm if available
+    try:
+        warm_caches_async(_n)
     except Exception:
         pass
 
@@ -280,6 +290,35 @@ def faction_preference_map() -> dict[int, str | None]:
                 )[0][0]
 
         return pref
+
+
+@st.cache_resource(show_spinner=False)
+def warm_caches_async(nonce: int = 0):
+    """Pre-populate frequently used @st.cache_data queries in parallel.
+
+    The 'nonce' parameter allows forcing a re-warm after mutations; changing it
+    invalidates this cached resource so the function runs again.
+    """
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            # Warm common snapshots both with and without archived players
+            ex.submit(list_players_snapshot, True)
+            ex.submit(list_players_snapshot, False)
+            # Faction preferences used across tabs
+            ex.submit(faction_preference_map)
+    except Exception:
+        # warming is best-effort
+        pass
+    return {"ok": True, "nonce": nonce}
+
+# First-load warm (only runs once thanks to @st.cache_resource)
+if "_warm_nonce" not in st.session_state:
+    st.session_state["_warm_nonce"] = 0
+try:
+    warm_caches_async(st.session_state["_warm_nonce"])
+except Exception:
+    pass
 def _score_from_result(result: str) -> float:
     if result == "a_win":
         return 1.0
