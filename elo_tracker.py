@@ -660,9 +660,15 @@ with T[idx["Leaderboard"]]:
 with T[idx["Data"]]:
     st.subheader("History")
     with Session(engine) as s:
-        matches = s.exec(select(Match).order_by(Match.week.desc(), Match.id.desc())).all()
+        # Order by reported_at (timestamp) for true recency; stable tiebreak by id
+        try:
+            matches = s.exec(select(Match).order_by(Match.reported_at.desc(), Match.id.desc())).all()
+        except Exception:
+            # Fallback to legacy week ordering if needed
+            matches = s.exec(select(Match).order_by(Match.week.desc(), Match.id.desc())).all()
         pmap = get_player_map(s)
         pref_map = faction_preference_map()
+
     if matches:
         rows = [{
             "Match ID": m.id,
