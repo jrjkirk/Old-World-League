@@ -969,7 +969,7 @@ if st.session_state.get("is_admin", False) and "Players" in idx:
                             attend_num = len(a_count)
                         st.write(f"Related records — Matches: **{matches_num}**, Attendance: **{attend_num}**.")
                         with st.form("delete_player_now_form", clear_on_submit=False):
-                        col_del1, col_del2 = st.columns([1,2])
+                            col_del1, col_del2 = st.columns([1,2])
                         with col_del1:
                             hard_delete = st.checkbox("Also delete all related matches & attendance", value=False, key="del_player_hard")
                         with col_del2:
