@@ -162,6 +162,9 @@ def update_elo(r_a: float, r_b: float, score_a: float, k: int) -> Tuple[float, f
 
 def invalidate_caches():
     try:
+        st.cache_data.clear()
+    except Exception:
+        pass
 
 # ---- Cached fetchers (performance, non-functional) ----
 @st.cache_data(ttl=60)
@@ -193,12 +196,6 @@ def faction_preference_map() -> dict[int, str | None]:
         else:
             pref[pid] = sorted(cdict.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
     return pref
-
-        st.cache_data.clear()
-    except Exception:
-        pass
-
-
 
 # === Rating Recalculation (for deletes/edits) ===
 BASE_RATING = 1000.0  # keep in sync with Player.rating default
@@ -657,7 +654,7 @@ if st.session_state.get("is_admin", False) and "Players" in idx:
             else:
                 labels = [f"{p.name} (ID {p.id})" for p in all_players]
                 id_by_label = {labels[i]: all_players[i].id for i in range(len(all_players))}
-            pref_map = faction_preference_map()
+                pref_map = faction_preference_map()
                 chosen = st.selectbox("Select a player", labels, key="edit_faction_player")
                 pid = id_by_label[chosen]
                 with Session(engine) as s:
@@ -935,8 +932,8 @@ if st.session_state.get("is_admin", False) and "Ad-Hoc Match" in idx:
         st.subheader("Ad-Hoc Match")
         adhoc_week = st.text_input("Week for ad-hoc", value=week_id_wed(date.today()), key="adhoc_w")
         include_arch = st.checkbox("Include archived players", value=False, key="adhoc_arch")
-            plist = list_players_snapshot(include_arch)
-if not plist: st.info("No players available.")
+        plist = list_players_snapshot(include_arch)
+        if not plist: st.info("No players available.")
         else:
             labels = [f"{p.name} (ID {p.id}, {int(round(p.rating))})" for p in plist]
             id_by_label = {labels[i]: plist[i].id for i in range(len(plist))}
@@ -952,7 +949,9 @@ if not plist: st.info("No players available.")
                 pa_tmp = s.get(Player, id_by_label[la]); pb_tmp = s.get(Player, id_by_label[lb])
             a_most = pref_map.get(pa_tmp.id) if pa_tmp else None
 
-            b_most = pref_map.get(pb_tmp.id) if pb_tmp else Nonea_def_idx = (factions.index(a_most) if (a_most in factions) else (factions.index(pa_tmp.faction) if (pa_tmp and pa_tmp.faction in factions) else 0))
+            b_most = pref_map.get(pb_tmp.id) if pb_tmp else None
+
+            a_def_idx = (factions.index(a_most) if (a_most in factions) else (factions.index(pa_tmp.faction) if (pa_tmp and pa_tmp.faction in factions) else 0))
 
             b_def_idx = (factions.index(b_most) if (b_most in factions) else (factions.index(pb_tmp.faction) if (pb_tmp and pb_tmp.faction in factions) else 0))
             a_faction2 = st.selectbox("Player A faction", PLACEHOLDER_FACTIONS_WITH_BLANK, index=a_def_idx, key="adhoc_af")
