@@ -187,7 +187,7 @@ def invalidate_caches():
         pass
 
 # ---- Cached fetchers (performance, non-functional) ----
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def list_players_snapshot(include_arch: bool) -> list[dict]:
     """Lightweight snapshot for player selects."""
     with Session(engine) as s:
@@ -197,7 +197,7 @@ def list_players_snapshot(include_arch: bool) -> list[dict]:
         players = s.exec(q.order_by(Player.name)).all()
         return [{"id": p.id, "name": p.name, "rating": float(p.rating), "faction": p.faction} for p in players]
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def faction_preference_map() -> dict[int, str | None]:
         counts: dict[int, dict[str, int]] = {}
 
@@ -307,6 +307,8 @@ def warm_caches_async(nonce: int = 0):
             ex.submit(list_players_snapshot, False)
             # Faction preferences used across tabs
             ex.submit(faction_preference_map)
+            # Player names map
+            ex.submit(player_name_map_cached)
     except Exception:
         # warming is best-effort
         pass
@@ -415,7 +417,7 @@ def week_id_wed(d: date) -> str:
     wednesday = d + timedelta(days=offset)
     return uk_date_str(wednesday)
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=120)
 def cached_player_record(player_id: int):
     with Session(engine) as s:
         return player_record(s, player_id)
@@ -700,12 +702,14 @@ with T[idx["Leaderboard"]]:
         if not show_archived:
             q = q.where(Player.active == True)
         players = s.exec(q.order_by(Player.rating.desc())).all()
-        rows_lead = _fetch_leaderboard_rows()
+        
+
+            rows_lead = _fetch_leaderboard_rows()
         if rows_lead:
             records = {r["id"]: (r["wins"], r["draws"], r["losses"]) for r in rows_lead}
         else:
             records = _wdl_map_via_db()
-    if players:
+if players:
         pref_map = faction_preference_map()
         rows = [
             {
@@ -735,6 +739,12 @@ with T[idx["Leaderboard"]]:
     else:
         st.info("No players yet.")
 
+
+@st.cache_data(ttl=300, show_spinner=False)
+def player_name_map_cached() -> dict[int, str]:
+    with Session(engine) as s:
+        return {p.id: p.name for p in s.exec(select(Player)).all()}
+
 with T[idx["Data"]]:
     st.subheader("History")
     with Session(engine) as s:
@@ -744,16 +754,16 @@ with T[idx["Data"]]:
         except Exception:
             # Fallback to legacy week ordering if needed
             matches = s.exec(select(Match).order_by(Match.week.desc(), Match.id.desc())).all()
-        pmap = get_player_map(s)
+        names = player_name_map_cached()
         pref_map = faction_preference_map()
 
     if matches:
         rows = [{
             "Match ID": m.id,
             "Week": m.week,
-            "A": pmap[m.player_a_id].name if m.player_a_id in pmap else f"A#{m.player_a_id}",
+            "A": names.get(m.player_a_id, f"A#{m.player_a_id}"),
             "Faction A": m.a_faction,
-            "B": (pmap[m.player_b_id].name if (m.player_b_id and m.player_b_id in pmap) else "BYE"),
+            "B": (names.get(m.player_b_id, f"B#{m.player_b_id}") if m.player_b_id else "BYE"),
             "Faction B": m.b_faction,
             "Result": m.result,
             "K Used": m.k_factor_used,
