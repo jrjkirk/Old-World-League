@@ -528,6 +528,7 @@ with T[idx["Data"]]:
     with Session(engine) as s:
         matches = s.exec(select(Match).order_by(Match.week.desc(), Match.id.desc())).all()
         pmap = get_player_map(s)
+        pref_map = faction_preference_map()
     if matches:
         rows = [{
             "Match ID": m.id,
@@ -664,6 +665,7 @@ if st.session_state.get("is_admin", False) and "Players" in idx:
             else:
                 labels = [f"{p.name} (ID {p.id})" for p in all_players]
                 id_by_label = {labels[i]: all_players[i].id for i in range(len(all_players))}
+                pref_map = faction_preference_map()
                 pref_map = faction_preference_map()
                 chosen = st.selectbox("Select a player", labels, key="edit_faction_player")
                 pid = id_by_label[chosen]
