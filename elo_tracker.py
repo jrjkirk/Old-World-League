@@ -769,7 +769,7 @@ with T[idx["Data"]]:
             "B Before": (round(m.b_rating_before,1) if m.b_rating_before is not None else None),
             "A After": (round(m.a_rating_after,1) if m.a_rating_after is not None else None),
             "B After": (round(m.b_rating_after,1) if m.b_rating_after is not None else None)
-        } for m in matches]
+        } for m in pending_matches]
         st.dataframe(rows, use_container_width=True, hide_index=True, column_config={"Rating": st.column_config.NumberColumn(format="%.1f"), "GP": st.column_config.NumberColumn(format="%d"), "W": st.column_config.NumberColumn(format="%d"), "D": st.column_config.NumberColumn(format="%d"), "L": st.column_config.NumberColumn(format="%d")})
     else: st.info("No matches recorded yet.")
 
@@ -1077,16 +1077,17 @@ if st.session_state.get("is_admin", False) and "Pairings" in idx:
         st.divider(); st.subheader("Weekly Pairings")
         lookup = st.text_input("Look up week (DD/MM/YYYY)", value=week_str, key="lookup_pair")
         with Session(engine) as s:
-            matches = s.exec(select(Match).where(Match.week == lookup).order_by(Match.id)).all(); pmap = get_player_map(s)
-        if matches:
-            rows = [{"Match ID": m.id, "A": f"{pmap[m.player_a_id].name} (#{m.player_a_id})", "B": (f"{pmap[m.player_b_id].name} (#{m.player_b_id})" if m.player_b_id else "BYE"), "Result": m.result} for m in matches]
+            all_matches = s.exec(select(Match).where(Match.week == lookup).order_by(Match.id)).all(); pmap = get_player_map(s)
+        pending_matches = [m for m in all_matches if m.result == "pending"]
+        if pending_matches:
+            rows = [{"Match ID": m.id, "A": f"{pmap[m.player_a_id].name} (#{m.player_a_id})", "B": (f"{pmap[m.player_b_id].name} (#{m.player_b_id})" if m.player_b_id else "BYE"), "Result": m.result} for m in pending_matches]
             st.dataframe(rows, use_container_width=True, hide_index=True)
 
             # Inline delete control for no-shows
             st.caption("Remove no-show pairings below. By default, only pending matches can be deleted.")
             allow_reported_delete = st.checkbox("Allow deleting reported results (dangerous)", value=False, key="del_allow_reported_inline")
             options = {}
-            for mm in (matches if allow_reported_delete else [x for x in matches if x.result == "pending"]):
+            for mm in (all_matches if allow_reported_delete else pending_matches):
                 a = pmap.get(mm.player_a_id); b = pmap.get(mm.player_b_id) if mm.player_b_id else None
                 label = f"#{mm.id}: {a.name if a else mm.player_a_id} vs {b.name if b else 'BYE'} — result={mm.result}"
                 options[label] = mm.id
@@ -1110,7 +1111,7 @@ if st.session_state.get("is_admin", False) and "Pairings" in idx:
             else:
                 st.info("No matches eligible for deletion.")
         else:
-            st.info("No matches for that week.")
+            st.info("No generated pairings (pending) for that week.")
 
         st.divider(); st.subheader("Manual pairing editor (admin)")
         st.caption("Enter a comma-separated list of player IDs to be paired in order: (1,2), (3,4), ... Use BYE token for an odd player.")
