@@ -340,13 +340,6 @@ def warm_caches_async(nonce: int = 0):
         pass
     return {"ok": True, "nonce": nonce}
 
-# First-load warm (only runs once thanks to @st.cache_resource)
-if "_warm_nonce" not in st.session_state:
-    st.session_state["_warm_nonce"] = 0
-try:
-    warm_caches_async(st.session_state["_warm_nonce"])
-except Exception:
-    pass
 def _score_from_result(result: str) -> float:
     if result == "a_win":
         return 1.0
@@ -769,6 +762,14 @@ def player_name_map_cached() -> dict[int, str]:
     with Session(engine) as s:
         return {p.id: p.name for p in s.exec(select(Player)).all()}
 
+
+# First-load warm (only runs once thanks to @st.cache_resource)
+if "_warm_nonce" not in st.session_state:
+    st.session_state["_warm_nonce"] = 0
+try:
+    warm_caches_async(st.session_state["_warm_nonce"])
+except Exception:
+    pass
 with T[idx["Data"]]:
     st.subheader("History")
     with Session(engine) as s:
