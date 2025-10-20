@@ -405,6 +405,17 @@ def sidebar_sponsor():
 # =============== Boot ===============
 apply_theme(); render_header()
 
+
+
+# --- Admin maintenance: manual full rating rebuild ---
+if st.session_state.get("is_admin"):
+    if st.sidebar.button("Recalculate Ratings", key="btn_recalc_all"):
+        try:
+            recalc_all_ratings(engine)
+            st.sidebar.success("Ratings recalculated from match history.")
+            st.rerun()
+        except Exception as _e:
+            st.sidebar.error("Recalculation failed. See logs for details.")
 # =============== Sidebar: Access & backup + sponsor ===============
 with st.sidebar:
     st.header("Access")
