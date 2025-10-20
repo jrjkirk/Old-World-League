@@ -116,7 +116,12 @@ def get_engine():
 
 engine = get_engine()
 
-SQLModel.metadata.create_all(engine)
+@st.cache_resource
+def init_db():
+    SQLModel.metadata.create_all(engine)
+    return True
+
+_ = init_db()
 
 # Run lightweight migrations only for SQLite (PRAGMA etc. are SQLite-specific)
 try:
@@ -157,6 +162,38 @@ def update_elo(r_a: float, r_b: float, score_a: float, k: int) -> Tuple[float, f
 
 def invalidate_caches():
     try:
+
+# ---- Cached fetchers (performance, non-functional) ----
+@st.cache_data(ttl=60)
+def list_players_snapshot(include_arch: bool) -> list[dict]:
+    """Lightweight snapshot for player selects."""
+    with Session(engine) as s:
+        q = select(Player)
+        if not include_arch:
+            q = q.where(Player.active == True)
+        players = s.exec(q.order_by(Player.name)).all()
+        return [{"id": p.id, "name": p.name, "rating": float(p.rating), "faction": p.faction} for p in players]
+
+@st.cache_data(ttl=60)
+def faction_preference_map() -> dict[int, str | None]:
+    """Most-played faction per player across all matches."""
+    counts: dict[int, dict[str, int]] = {}
+    with Session(engine) as s:
+        for m in s.exec(select(Match)).all():
+            if getattr(m, "a_faction", None):
+                counts.setdefault(m.player_a_id, {}).setdefault(m.a_faction, 0)
+                counts[m.player_a_id][m.a_faction] += 1
+            if m.player_b_id is not None and getattr(m, "b_faction", None):
+                counts.setdefault(m.player_b_id, {}).setdefault(m.b_faction, 0)
+                counts[m.player_b_id][m.b_faction] += 1
+    pref: dict[int, str | None] = {}
+    for pid, cdict in counts.items():
+        if not cdict:
+            pref[pid] = None
+        else:
+            pref[pid] = sorted(cdict.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+    return pref
+
         st.cache_data.clear()
     except Exception:
         pass
@@ -543,6 +580,7 @@ with T[idx["Enter Results"]]:
         matches = s.exec(select(Match).where(Match.week == week_val).order_by(Match.id)).all()
         pmap = get_player_map(s)
 
+    pref_map = faction_preference_map()
     if locked: st.info("Week is locked. Enter the password to submit results.")
     elif not matches: st.info("No matches found for that week.")
     else:
@@ -554,11 +592,8 @@ with T[idx["Enter Results"]]:
                 k_choice = st.radio("K-factor", ["Casual (10)", "Competitive (40)"], index=1, horizontal=True, key=f"k_{m.id}", disabled=(m.result != "pending" or b is None))
                 result = st.selectbox("Result", ["a_win", "b_win", "draw"], key=f"sel_{m.id}", disabled=(m.result != "pending" or b is None))
                 # Use placeholder factions, default to match faction if present, else player's saved faction, else blank
-                with Session(engine) as _s_stats:
-
-                    a_pref = most_played_faction(_s_stats, a.id) if a else None
-
-                    b_pref = most_played_faction(_s_stats, b.id) if b else None
+                a_pref = pref_map.get(a.id) if a else None
+                b_pref = pref_map.get(b.id) if b else None
                 a_default_idx = _faction_index_or_blank(getattr(m, 'a_faction', None) or a_pref or (a.faction if a else None))
                 b_default_idx = 0 if b is None else _faction_index_or_blank(getattr(m, 'b_faction', None) or b_pref or (b.faction if b else None))
                 a_faction = st.selectbox("Player A faction", PLACEHOLDER_FACTIONS_WITH_BLANK, index=a_default_idx, key=f"af_{m.id}", disabled=(m.result != "pending"))
@@ -622,6 +657,7 @@ if st.session_state.get("is_admin", False) and "Players" in idx:
             else:
                 labels = [f"{p.name} (ID {p.id})" for p in all_players]
                 id_by_label = {labels[i]: all_players[i].id for i in range(len(all_players))}
+            pref_map = faction_preference_map()
                 chosen = st.selectbox("Select a player", labels, key="edit_faction_player")
                 pid = id_by_label[chosen]
                 with Session(engine) as s:
@@ -898,12 +934,9 @@ if st.session_state.get("is_admin", False) and "Ad-Hoc Match" in idx:
     with T[idx["Ad-Hoc Match"]]:
         st.subheader("Ad-Hoc Match")
         adhoc_week = st.text_input("Week for ad-hoc", value=week_id_wed(date.today()), key="adhoc_w")
-        with Session(engine) as s:
-            include_arch = st.checkbox("Include archived players", value=False, key="adhoc_arch")
-            q = select(Player) 
-            if not include_arch: q = q.where(Player.active == True)
-            plist = s.exec(q.order_by(Player.name)).all()
-        if not plist: st.info("No players available.")
+        include_arch = st.checkbox("Include archived players", value=False, key="adhoc_arch")
+            plist = list_players_snapshot(include_arch)
+if not plist: st.info("No players available.")
         else:
             labels = [f"{p.name} (ID {p.id}, {int(round(p.rating))})" for p in plist]
             id_by_label = {labels[i]: plist[i].id for i in range(len(plist))}
@@ -917,13 +950,9 @@ if st.session_state.get("is_admin", False) and "Ad-Hoc Match" in idx:
             # Default faction pickers to the players' saved faction (or blank)
             with Session(engine) as s:
                 pa_tmp = s.get(Player, id_by_label[la]); pb_tmp = s.get(Player, id_by_label[lb])
-            with Session(engine) as _s_stats2:
+            a_most = pref_map.get(pa_tmp.id) if pa_tmp else None
 
-                a_most = most_played_faction(_s_stats2, pa_tmp.id) if pa_tmp else None
-
-                b_most = most_played_faction(_s_stats2, pb_tmp.id) if pb_tmp else None
-
-            a_def_idx = (factions.index(a_most) if (a_most in factions) else (factions.index(pa_tmp.faction) if (pa_tmp and pa_tmp.faction in factions) else 0))
+            b_most = pref_map.get(pb_tmp.id) if pb_tmp else Nonea_def_idx = (factions.index(a_most) if (a_most in factions) else (factions.index(pa_tmp.faction) if (pa_tmp and pa_tmp.faction in factions) else 0))
 
             b_def_idx = (factions.index(b_most) if (b_most in factions) else (factions.index(pb_tmp.faction) if (pb_tmp and pb_tmp.faction in factions) else 0))
             a_faction2 = st.selectbox("Player A faction", PLACEHOLDER_FACTIONS_WITH_BLANK, index=a_def_idx, key="adhoc_af")
