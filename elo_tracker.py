@@ -991,9 +991,13 @@ if st.session_state.get("is_admin", False) and "Ad-Hoc Match" in idx:
                 if disabled:
                     st.caption("Players must differ.")
 
-                submitted = st.form_submit_button("Save ad-hoc result", disabled=disabled)
+                submitted = st.form_submit_button("Save ad-hoc result")
 
-            if submitted:
+            if submitted and pid_a == pid_b:
+                    st.error("Players must differ.")
+
+
+            elif submitted:
                 with Session(engine) as s3:
                     pa = s3.get(Player, pid_a)
                     pb = s3.get(Player, pid_b)
