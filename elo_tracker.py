@@ -189,27 +189,97 @@ def list_players_snapshot(include_arch: bool) -> list[dict]:
 
 @st.cache_data(ttl=60)
 def faction_preference_map() -> dict[int, str | None]:
-    """Most-played faction per player across all matches."""
-    counts: dict[int, dict[str, int]] = {}
-    with Session(engine) as s:
-        for m in s.exec(select(Match)).all():
-            if getattr(m, "a_faction", None):
-                counts.setdefault(m.player_a_id, {}).setdefault(m.a_faction, 0)
-                counts[m.player_a_id][m.a_faction] += 1
-            if m.player_b_id is not None and getattr(m, "b_faction", None):
-                counts.setdefault(m.player_b_id, {}).setdefault(m.b_faction, 0)
-                counts[m.player_b_id][m.b_faction] += 1
-    pref: dict[int, str | None] = {}
-    for pid, cdict in counts.items():
-        if not cdict:
-            pref[pid] = None
-        else:
-            pref[pid] = sorted(cdict.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
-    return pref
+        counts: dict[int, dict[str, int]] = {}
 
-# === Rating Recalculation (for deletes/edits) ===
-BASE_RATING = 1000.0  # keep in sync with Player.rating default
+        last_seen: dict[tuple[int, str], tuple[int, int]] = {}  # (reported_at_ts, match_id) for tie-breaking
 
+
+
+        with Session(engine) as s:
+
+            matches = s.exec(select(Match)).all()
+
+            for m in matches:
+
+                # Use reported_at if available; fallback to 0. Also keep match id for deterministic fallback.
+
+                ts = int(m.reported_at.timestamp()) if getattr(m, "reported_at", None) else 0
+
+                mid = int(getattr(m, "id", 0) or 0)
+
+
+
+                if getattr(m, "a_faction", None):
+
+                    pid = m.player_a_id
+
+                    fac = m.a_faction
+
+                    counts.setdefault(pid, {}).setdefault(fac, 0)
+
+                    counts[pid][fac] += 1
+
+                    key = (pid, fac)
+
+                    prev = last_seen.get(key)
+
+                    if prev is None or (ts, mid) > prev:
+
+                        last_seen[key] = (ts, mid)
+
+
+
+                if m.player_b_id is not None and getattr(m, "b_faction", None):
+
+                    pid = m.player_b_id
+
+                    fac = m.b_faction
+
+                    counts.setdefault(pid, {}).setdefault(fac, 0)
+
+                    counts[pid][fac] += 1
+
+                    key = (pid, fac)
+
+                    prev = last_seen.get(key)
+
+                    if prev is None or (ts, mid) > prev:
+
+                        last_seen[key] = (ts, mid)
+
+
+
+        pref: dict[int, str | None] = {}
+
+        for pid, cdict in counts.items():
+
+            if not cdict:
+
+                pref[pid] = None
+
+            else:
+
+                # Sort by: most games desc, then most recent (reported_at desc then match id desc), then name asc
+
+                pref[pid] = sorted(
+
+                    cdict.items(),
+
+                    key=lambda kv: (
+
+                        -kv[1],
+
+                        -(last_seen.get((pid, kv[0]), (0, 0))[0]),
+
+                        -(last_seen.get((pid, kv[0]), (0, 0))[1]),
+
+                        kv[0]
+
+                    )
+
+                )[0][0]
+
+        return pref
 def _score_from_result(result: str) -> float:
     if result == "a_win":
         return 1.0
