@@ -790,7 +790,7 @@ with T[idx["Data"]]:
             "B Before": (round(m.b_rating_before,1) if m.b_rating_before is not None else None),
             "A After": (round(m.a_rating_after,1) if m.a_rating_after is not None else None),
             "B After": (round(m.b_rating_after,1) if m.b_rating_after is not None else None)
-        } for m in matches]
+        } for m in pending_matches]
         st.dataframe(rows, use_container_width=True, hide_index=True, column_config={"Rating": st.column_config.NumberColumn(format="%.1f"), "GP": st.column_config.NumberColumn(format="%d"), "W": st.column_config.NumberColumn(format="%d"), "D": st.column_config.NumberColumn(format="%d"), "L": st.column_config.NumberColumn(format="%d")})
     else: st.info("No matches recorded yet.")
 
