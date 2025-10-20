@@ -1051,3 +1051,44 @@ if st.session_state.get("is_admin", False) and "Ad-Hoc Match" in idx:
 
                 invalidate_caches()
                 st.success(f"Ad-hoc match saved (K={k}). Match {m_id}.")
+
+        st.divider()
+        with st.expander("Delete matches (browse all)", expanded=False):
+            with Session(engine) as s:
+                # Load all completed matches newest first
+                from sqlalchemy import desc, asc
+                ms = s.exec(select(Match).where(Match.result != "pending").order_by(desc(Match.reported_at) if hasattr(Match, "reported_at") else desc(Match.id), desc(Match.week), desc(Match.id))).all()
+                pmap = {p.id: p for p in s.exec(select(Player)).all()}
+            if not ms:
+                st.info("No recorded matches yet.")
+            else:
+                # Prebuild readable labels
+                labels = []
+                id_by_label = {}
+                for m_ in ms:
+                    pa = pmap.get(m_.player_a_id); pb = pmap.get(m_.player_b_id) if m_.player_b_id else None
+                    name_a = pa.name if pa else f"#{m_.player_a_id}"
+                    name_b = pb.name if pb else "BYE"
+                    res = "A won" if m_.result == "a_win" else "B won" if m_.result == "b_win" else "Draw"
+                    label = f"#{m_.id} — {m_.week} — {name_a} vs {name_b} — {res}"
+                    labels.append(label); id_by_label[label] = m_.id
+
+                with st.form("delete_matches_form", clear_on_submit=True):
+                    pick = st.multiselect("Select matches to delete", options=labels, help="Browse all matches (ad-hoc and weekly).")
+                    do_delete = st.form_submit_button("Delete selected matches and recalc ratings", use_container_width=False)
+
+                if do_delete and pick:
+                    ids = [id_by_label[x] for x in pick]
+                    with Session(engine) as s2:
+                        for mid in ids:
+                            obj = s2.get(Match, mid)
+                            if obj is not None:
+                                s2.delete(obj)
+                        s2.commit()
+
+                    # Full rebuild from history to maintain correctness
+                    recalc_all_ratings(engine)
+                    invalidate_caches()
+                    st.success(f"Deleted {len(ids)} match(es) and recalculated ratings.")
+                    st.rerun()
+
