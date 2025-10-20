@@ -518,7 +518,10 @@ with T[idx["Leaderboard"]]:
         players = s.exec(q.order_by(Player.rating.desc())).all()
         records = {p.id: (*cached_player_record(p.id),) for p in players}
     if players:
+        pref_map = faction_preference_map()
         rows = [{"Rank": i+1, "Name": p.name, "Faction": p.faction, "Rating": round(p.rating, 1), "GP": sum(records[p.id]), "W": records[p.id][0], "D": records[p.id][1], "L": records[p.id][2]} for i, p in enumerate(players)]
+        rows = [{**r, 'Most played': pref_map.get(players[i].id)} for i, r in enumerate(rows)]
+
         st.dataframe(rows, use_container_width=True, hide_index=True, column_config={"Rating": st.column_config.NumberColumn(format="%.1f"), "GP": st.column_config.NumberColumn(format="%d"), "W": st.column_config.NumberColumn(format="%d"), "D": st.column_config.NumberColumn(format="%d"), "L": st.column_config.NumberColumn(format="%d")})
     else: st.info("No players yet.")
 
@@ -1022,5 +1025,7 @@ if st.session_state.get("is_admin", False) and "Ad-Hoc Match" in idx:
 
                     s3.add(pa); s3.add(pb); s3.add(m); s3.commit()
 
+                    m_id = m.id
+
                 invalidate_caches()
-                st.success(f"Ad-hoc match saved (K={k}). Match {m.id}.")
+                st.success(f"Ad-hoc match saved (K={k}). Match {m_id}.")
