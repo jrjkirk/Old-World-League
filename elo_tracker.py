@@ -514,18 +514,40 @@ with T[idx["Leaderboard"]]:
     show_archived = st.checkbox("Include archived players", value=False, key="lb_arch")
     with Session(engine) as s:
         q = select(Player)
-        if not show_archived: q = q.where(Player.active == True)
+        if not show_archived:
+            q = q.where(Player.active == True)
         players = s.exec(q.order_by(Player.rating.desc())).all()
         records = {p.id: (*cached_player_record(p.id),) for p in players}
     if players:
         pref_map = faction_preference_map()
-        rows = [{"Rank": i+1, "Name": p.name, "Faction": p.faction, "Rating": round(p.rating, 1), "GP": sum(records[p.id]), "W": records[p.id][0], "D": records[p.id][1], "L": records[p.id][2]} for i, p in enumerate(players)]
-        rows = [{**r, 'Most played': pref_map.get(players[i].id)} for i, r in enumerate(rows)]
+        rows = [
+            {
+                "Rank": i + 1,
+                "Name": p.name,
+                "Faction": (pref_map.get(p.id) if pref_map.get(p.id) else (p.faction or "—")),
+                "Rating": round(p.rating, 1),
+                "GP": sum(records[p.id]),
+                "W": records[p.id][0],
+                "D": records[p.id][1],
+                "L": records[p.id][2],
+            }
+            for i, p in enumerate(players)
+        ]
+        st.dataframe(
+            rows,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Rating": st.column_config.NumberColumn(format="%.1f"),
+                "GP": st.column_config.NumberColumn(format="%d"),
+                "W": st.column_config.NumberColumn(format="%d"),
+                "D": st.column_config.NumberColumn(format="%d"),
+                "L": st.column_config.NumberColumn(format="%d"),
+            },
+        )
+    else:
+        st.info("No players yet.")
 
-        st.dataframe(rows, use_container_width=True, hide_index=True, column_config={"Rating": st.column_config.NumberColumn(format="%.1f"), "GP": st.column_config.NumberColumn(format="%d"), "W": st.column_config.NumberColumn(format="%d"), "D": st.column_config.NumberColumn(format="%d"), "L": st.column_config.NumberColumn(format="%d")})
-    else: st.info("No players yet.")
-
-# =============== Data (history) ===============
 with T[idx["Data"]]:
     st.subheader("History")
     with Session(engine) as s:
