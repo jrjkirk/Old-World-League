@@ -618,6 +618,43 @@ idx = {name: i for i, name in enumerate(order)}
 T = st.tabs(order)
 
 # =============== Leaderboard ===============
+
+# --- Fast-path: fetch W/D/L via DB function (fallback to local) ---
+@st.cache_data(ttl=60, show_spinner=False)
+def _wdl_map_via_db() -> dict[int, tuple[int,int,int]]:
+    """Return {player_id: (wins, draws, losses)} using SQL function public.player_wdl().
+    Falls back to local computation if the function isn't available.
+    """
+    try:
+        from sqlalchemy import text as _sqltext
+        with Session(engine) as _s:
+            # Call the helper first; many setups will only have player_wdl()
+            rows = _s.exec(_sqltext("select * from public.player_wdl()")).all()
+            if rows:
+                out = {}
+                # rows may be Row objects or tuples depending on driver
+                for r in rows:
+                    try:
+                        pid = int(r.player_id)
+                        w = int(r.wins); d = int(r.draws); l = int(r.losses)
+                    except Exception:
+                        pid, w, d, l = int(r[0]), int(r[1]), int(r[2]), int(r[3])
+                    out[pid] = (w, d, l)
+                return out
+    except Exception:
+        pass
+    # Fallbacks identical to previous behavior
+    try:
+        return player_records_all()  # if present
+    except Exception:
+        pass
+    try:
+        with Session(engine) as _s:
+            ids = [p.id for p in _s.exec(select(Player)).all()]
+        return {pid: (*cached_player_record(pid),) for pid in ids}
+    except Exception:
+        return {}
+
 with T[idx["Leaderboard"]]:
     st.subheader("Leaderboard")
     show_archived = st.checkbox("Include archived players", value=False, key="lb_arch")
@@ -626,7 +663,7 @@ with T[idx["Leaderboard"]]:
         if not show_archived:
             q = q.where(Player.active == True)
         players = s.exec(q.order_by(Player.rating.desc())).all()
-        records = {p.id: (*cached_player_record(p.id),) for p in players}
+        records = _wdl_map_via_db()
     if players:
         pref_map = faction_preference_map()
         rows = [
