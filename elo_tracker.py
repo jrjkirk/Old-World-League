@@ -1,6 +1,19 @@
 
 """
-Old World League ELO Tracker
+Old World League ELO Tracker — streamlined, stable build
+- Sticky header, dark theme
+- Admin sidebar + Element Games sponsor
+- Tabs: Leaderboard, Data, Enter Results (+ Players, Pairings, Ad-Hoc Match for admin)
+
+Includes:
+1) Correct loss counting in player_record.
+2) Manual pairing editor (admin) with optional BYE token.
+3) Delete no-show pairings inline under Weekly Pairings.
+4) UK date format (DD/MM/YYYY) and Week ID = Wednesday of the week.
+5) Ad-Hoc Match moved to its own admin-only tab.
+6) Reset controls moved under Generate Pairings.
+7) Player Faction (NEW): choose a faction when adding a player and edit it later in a collapsible panel.
+   Uses the same placeholder factions as match entry: "faction 1", "faction 2", "faction 3".
 """
 from __future__ import annotations
 from datetime import datetime, date, timedelta
@@ -20,7 +33,7 @@ ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", os.getenv("ADMIN_PASSWORD", "c
 LOGO_URL = st.secrets.get("LOGO_URL", os.getenv("LOGO_URL", ""))
 LOGO_WIDTH = int(st.secrets.get("LOGO_WIDTH", os.getenv("LOGO_WIDTH", 120)))
 
-# Placeholder factions
+# Placeholder factions (same as existing usage elsewhere)
 PLACEHOLDER_FACTIONS: List[str] = ['Empire of Man', 'Dwarfen Mountain Holds', 'Kingdom of Bretonnia', 'Wood Elf Realms', 'High Elf Realms', 'Orc & Goblin Tribes', 'Warriors of Chaos', 'Beastmen Brayheards', 'Tomb Kings of Khemri', 'Skaven', 'Ogre Kingdoms', 'Lizardmen', 'Chaos Dwarfs', 'Dark Elves', 'Daemons of Chaos', 'Vampire Counts']
 PLACEHOLDER_FACTIONS_WITH_BLANK: List[str] = ["— None —", *PLACEHOLDER_FACTIONS]
 
@@ -140,6 +153,70 @@ def update_elo(r_a: float, r_b: float, score_a: float, k: int) -> Tuple[float, f
     return r_a + k * (score_a - e_a), r_b + k * ((1 - score_a) - e_b)
 
 # =============== Utils ===============
+
+
+# === Rating Recalculation (for deletes/edits) ===
+BASE_RATING = 1000.0  # keep in sync with Player.rating default
+
+def _score_from_result(result: str) -> float:
+    if result == "a_win":
+        return 1.0
+    if result == "b_win":
+        return 0.0
+    return 0.5  # draw/other
+
+def recalc_all_ratings(engine) -> None:
+    """Reset all player ratings to base and replay every completed match in order.
+    Also refresh per-match before/after snapshots and k_factor_used for consistency.
+    Safe on SQLite or Postgres.
+    """
+    from sqlmodel import Session, select
+    from sqlalchemy import asc
+    with Session(engine) as s:
+        players = s.exec(select(Player)).all()
+        pmap = {p.id: p for p in players}
+        for p in players:
+            p.rating = BASE_RATING
+            s.add(p)
+        s.commit()
+
+        q = select(Match).where(Match.result != "pending")
+        matches = s.exec(q.order_by(
+            asc(Match.week),
+            asc(Match.reported_at) if hasattr(Match, "reported_at") else asc(Match.id),
+            asc(Match.id)
+        )).all()
+
+        for m in matches:
+            pa = pmap.get(m.player_a_id)
+            pb = pmap.get(m.player_b_id) if m.player_b_id is not None else None
+            # snapshot before
+            m.a_rating_before = pa.rating if pa else None
+            m.b_rating_before = pb.rating if pb else None
+
+            # BYE: no rating change
+            if pb is None:
+                m.a_rating_after = pa.rating if pa else None
+                m.b_rating_after = None
+                s.add(m)
+                continue
+
+            score_a = _score_from_result(m.result or "draw")
+            k = int(m.k_factor_used) if m.k_factor_used else 40
+            new_a, new_b = update_elo(pa.rating, pb.rating, score_a, k)
+            # snapshot after
+            m.a_rating_after = new_a
+            m.b_rating_after = new_b
+            m.k_factor_used = k
+
+            if pa:
+                pa.rating = new_a; s.add(pa)
+            if pb:
+                pb.rating = new_b; s.add(pb)
+
+            s.add(m)
+
+        s.commit()
 
 def most_played_faction(session: Session, player_id: int) -> Optional[str]:
     """Return the faction this player has most often played in recorded matches.
@@ -591,6 +668,7 @@ if st.session_state.get("is_admin", False) and "Players" in idx:
                                 pl = s.get(Player, sel_id)
                                 if pl:
                                     s.delete(pl); s.commit()
+                                    recalc_all_ratings(engine)
                                     st.success("Player deleted permanently."); st.rerun()
 # =============== Pairings (admin) ===============
 if st.session_state.get("is_admin", False) and "Pairings" in idx:
