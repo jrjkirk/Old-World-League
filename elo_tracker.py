@@ -790,7 +790,7 @@ with T[idx["Data"]]:
             "B Before": (round(m.b_rating_before,1) if m.b_rating_before is not None else None),
             "A After": (round(m.a_rating_after,1) if m.a_rating_after is not None else None),
             "B After": (round(m.b_rating_after,1) if m.b_rating_after is not None else None)
-        } for m in pending_matches]
+        } for m in matches]
         st.dataframe(rows, use_container_width=True, hide_index=True, column_config={"Rating": st.column_config.NumberColumn(format="%.1f"), "GP": st.column_config.NumberColumn(format="%d"), "W": st.column_config.NumberColumn(format="%d"), "D": st.column_config.NumberColumn(format="%d"), "L": st.column_config.NumberColumn(format="%d")})
     else: st.info("No matches recorded yet.")
 
@@ -968,17 +968,14 @@ if st.session_state.get("is_admin", False) and "Players" in idx:
                             matches_num = len(m_count)
                             attend_num = len(a_count)
                         st.write(f"Related records — Matches: **{matches_num}**, Attendance: **{attend_num}**.")
-                        with st.form("delete_player_now_form", clear_on_submit=False):
+                                                with st.form("delete_player_now_form", clear_on_submit=False):
                             col_del1, col_del2 = st.columns([1,2])
                             with col_del1:
                                 hard_delete = st.checkbox("Also delete all related matches & attendance", value=False, key="del_player_hard")
                             with col_del2:
                                 confirm_text = st.text_input('Type **DELETE** to confirm', key="del_player_confirm")
-                            submitted_delete = st.form_submit_button("Delete player now", type="primary", key="btn_delete_player_now", disabled=(confirm_text.strip().upper() != "DELETE"))
-                        if submitted_delete:
-                            if confirm_text.strip().upper() != "DELETE":
-                                st.error("Type DELETE to confirm."); st.stop()
-
+                            submitted_delete = st.form_submit_button("Delete player now", type="primary", key="btn_delete_player_now".upper() != "DELETE"))
+                    if submitted_delete:
                             with Session(engine) as s:
                                 if hard_delete:
                                     for mm in s.exec(select(Match).where((Match.player_a_id == sel_id) | (Match.player_b_id == sel_id))).all():
@@ -1319,4 +1316,3 @@ if st.session_state.get("is_admin", False) and "Ad-Hoc Match" in idx:
                     invalidate_caches()
                     st.success(f"Deleted {len(ids)} match(es) and recalculated ratings.")
                     st.rerun()
-
