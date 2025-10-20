@@ -1,19 +1,6 @@
 
 """
-Old World League ELO Tracker — streamlined, stable build
-- Sticky header, dark theme
-- Admin sidebar + Element Games sponsor
-- Tabs: Leaderboard, Data, Enter Results (+ Players, Pairings, Ad-Hoc Match for admin)
-
-Includes:
-1) Correct loss counting in player_record.
-2) Manual pairing editor (admin) with optional BYE token.
-3) Delete no-show pairings inline under Weekly Pairings.
-4) UK date format (DD/MM/YYYY) and Week ID = Wednesday of the week.
-5) Ad-Hoc Match moved to its own admin-only tab.
-6) Reset controls moved under Generate Pairings.
-7) Player Faction (NEW): choose a faction when adding a player and edit it later in a collapsible panel.
-   Uses the same placeholder factions as match entry: "faction 1", "faction 2", "faction 3".
+Old World League ELO Tracke
 """
 from __future__ import annotations
 from datetime import datetime, date, timedelta
@@ -33,7 +20,7 @@ ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", os.getenv("ADMIN_PASSWORD", "c
 LOGO_URL = st.secrets.get("LOGO_URL", os.getenv("LOGO_URL", ""))
 LOGO_WIDTH = int(st.secrets.get("LOGO_WIDTH", os.getenv("LOGO_WIDTH", 120)))
 
-# Placeholder factions (same as existing usage elsewhere)
+# Placeholder factions
 PLACEHOLDER_FACTIONS: List[str] = ['Empire of Man', 'Dwarfen Mountain Holds', 'Kingdom of Bretonnia', 'Wood Elf Realms', 'High Elf Realms', 'Orc & Goblin Tribes', 'Warriors of Chaos', 'Beastmen Brayheards', 'Tomb Kings of Khemri', 'Skaven', 'Ogre Kingdoms', 'Lizardmen', 'Chaos Dwarfs', 'Dark Elves', 'Daemons of Chaos', 'Vampire Counts']
 PLACEHOLDER_FACTIONS_WITH_BLANK: List[str] = ["— None —", *PLACEHOLDER_FACTIONS]
 
