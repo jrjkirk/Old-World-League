@@ -705,7 +705,7 @@ with T[idx["Leaderboard"]]:
             records = {r["id"]: (r["wins"], r["draws"], r["losses"]) for r in rows_lead}
         else:
             records = _wdl_map_via_db()
-if players:
+    if players:
         pref_map = faction_preference_map()
         rows = [
             {
