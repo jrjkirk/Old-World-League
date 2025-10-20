@@ -292,6 +292,32 @@ def faction_preference_map() -> dict[int, str | None]:
         return pref
 
 
+# --- Cached fetchers (incremental, no UI changes) ---
+@st.cache_data(ttl=60, show_spinner=False)
+def list_matches_recent() -> list[Match]:
+    with Session(engine) as s:
+        try:
+            q = select(Match).order_by(Match.reported_at.desc(), Match.id.desc())
+        except Exception:
+            q = select(Match).order_by(Match.week.desc(), Match.id.desc())
+        return s.exec(q).all()
+
+@st.cache_data(ttl=60, show_spinner=False)
+def list_week_matches(week: str) -> list[Match]:
+    with Session(engine) as s:
+        return s.exec(select(Match).where(Match.week == week).order_by(Match.id)).all()
+
+@st.cache_data(ttl=120, show_spinner=False)
+def list_nonpending_recent() -> list[Match]:
+    with Session(engine) as s:
+        from sqlalchemy import desc
+        q = select(Match).where(Match.result != "pending") \
+            .order_by(desc(Match.reported_at) if hasattr(Match, "reported_at") else desc(Match.id),
+                      desc(Match.week),
+                      desc(Match.id))
+        return s.exec(q).all()
+
+
 @st.cache_resource(show_spinner=False)
 def warm_caches_async(nonce: int = 0):
     """Pre-populate frequently used @st.cache_data queries in parallel.
@@ -746,12 +772,7 @@ def player_name_map_cached() -> dict[int, str]:
 with T[idx["Data"]]:
     st.subheader("History")
     with Session(engine) as s:
-        # Order by reported_at (timestamp) for true recency; stable tiebreak by id
-        try:
-            matches = s.exec(select(Match).order_by(Match.reported_at.desc(), Match.id.desc())).all()
-        except Exception:
-            # Fallback to legacy week ordering if needed
-            matches = s.exec(select(Match).order_by(Match.week.desc(), Match.id.desc())).all()
+        matches = list_matches_recent()
         names = player_name_map_cached()
         pref_map = faction_preference_map()
 
@@ -811,7 +832,7 @@ with T[idx["Enter Results"]]:
     locked = wk_pw and (not st.session_state[wk_key])
 
     with Session(engine) as s:
-        matches = s.exec(select(Match).where(Match.week == week_val).order_by(Match.id)).all()
+        matches = list_week_matches(week_val)
         pmap = get_player_map(s)
 
     pref_map = faction_preference_map()
@@ -1257,9 +1278,8 @@ if st.session_state.get("is_admin", False) and "Ad-Hoc Match" in idx:
         st.divider()
         with st.expander("Delete matches (browse all)", expanded=False):
             with Session(engine) as s:
-                # Load all completed matches newest first
-                from sqlalchemy import desc, asc
-                ms = s.exec(select(Match).where(Match.result != "pending").order_by(desc(Match.reported_at) if hasattr(Match, "reported_at") else desc(Match.id), desc(Match.week), desc(Match.id))).all()
+                # Load all completed matches newest first (cached)
+                ms = list_nonpending_recent()
                 pmap = {p.id: p for p in s.exec(select(Player)).all()}
             if not ms:
                 st.info("No recorded matches yet.")
