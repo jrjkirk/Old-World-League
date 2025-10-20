@@ -160,6 +160,16 @@ def update_elo(r_a: float, r_b: float, score_a: float, k: int) -> Tuple[float, f
 
 # =============== Utils ===============
 
+def _player_label(p) -> str:
+    # Supports both ORM Player objects and dict snapshots
+    if isinstance(p, dict):
+        return f"{p['name']} (ID {p['id']}, {int(round(p['rating']))})"
+    return f"{p.name} (ID {p.id}, {int(round(p.rating))})"
+
+def _player_id(p) -> int:
+    return p['id'] if isinstance(p, dict) else p.id
+
+
 def invalidate_caches():
     try:
         st.cache_data.clear()
@@ -935,8 +945,8 @@ if st.session_state.get("is_admin", False) and "Ad-Hoc Match" in idx:
         plist = list_players_snapshot(include_arch)
         if not plist: st.info("No players available.")
         else:
-            labels = [f"{p.name} (ID {p.id}, {int(round(p.rating))})" for p in plist]
-            id_by_label = {labels[i]: plist[i].id for i in range(len(plist))}
+            labels = [_player_label(p) for p in plist]
+            id_by_label = {labels[i]: _player_id(plist[i]) for i in range(len(plist))}
             c1, c2 = st.columns(2)
             with c1: la = st.selectbox("Player A", options=labels, key="adhoc_a")
             with c2: lb = st.selectbox("Player B", options=labels, key="adhoc_b")
