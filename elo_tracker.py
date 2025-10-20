@@ -22,6 +22,7 @@ import os, base64
 
 import streamlit as st
 from sqlmodel import SQLModel, Field, create_engine, Session, select
+from sqlalchemy.pool import NullPool
 
 # =============== Config & State ===============
 st.set_page_config(page_title="Old World League ELO Tracker", layout="wide")
@@ -97,8 +98,8 @@ def get_engine():
     import os
     DB_URL = st.secrets.get("DATABASE_URL", os.getenv("DATABASE_URL"))
     if DB_URL:
-        # Postgres (or any SQLAlchemy URL) path
-        return create_engine(DB_URL, echo=False)
+        # Postgres / external DB: use NullPool with Session Pooler
+        return create_engine(DB_URL, echo=False, poolclass=NullPool)
     # Fallback to local SQLite (dev)
     from sqlalchemy import event
     eng = create_engine(f"sqlite:///{DB_PATH}", echo=False, connect_args={"check_same_thread": False})
@@ -153,6 +154,13 @@ def update_elo(r_a: float, r_b: float, score_a: float, k: int) -> Tuple[float, f
     return r_a + k * (score_a - e_a), r_b + k * ((1 - score_a) - e_b)
 
 # =============== Utils ===============
+
+def invalidate_caches():
+    try:
+        st.cache_data.clear()
+    except Exception:
+        pass
+
 
 
 # === Rating Recalculation (for deletes/edits) ===
@@ -253,6 +261,12 @@ def week_id_wed(d: date) -> str:
     offset = 2 - d.weekday()
     wednesday = d + timedelta(days=offset)
     return uk_date_str(wednesday)
+
+@st.cache_data(ttl=30)
+def cached_player_record(player_id: int):
+    with Session(engine) as s:
+        return player_record(s, player_id)
+
 
 def get_player_map(session: Session) -> Dict[int, Player]:
     return {p.id: p for p in session.exec(select(Player)).all()}
@@ -458,7 +472,7 @@ with T[idx["Leaderboard"]]:
         q = select(Player)
         if not show_archived: q = q.where(Player.active == True)
         players = s.exec(q.order_by(Player.rating.desc())).all()
-        records = {p.id: (*player_record(s, p.id),) for p in players}
+        records = {p.id: (*cached_player_record(p.id),) for p in players}
     if players:
         rows = [{"Rank": i+1, "Name": p.name, "Faction": p.faction, "Rating": round(p.rating, 1), "GP": sum(records[p.id]), "W": records[p.id][0], "D": records[p.id][1], "L": records[p.id][2]} for i, p in enumerate(players)]
         st.dataframe(rows, use_container_width=True, hide_index=True, column_config={"Rating": st.column_config.NumberColumn(format="%.1f"), "GP": st.column_config.NumberColumn(format="%d"), "W": st.column_config.NumberColumn(format="%d"), "D": st.column_config.NumberColumn(format="%d"), "L": st.column_config.NumberColumn(format="%d")})
@@ -563,12 +577,12 @@ with T[idx["Enter Results"]]:
                             if pb is None:
                                 match.result = "a_win"; match.a_rating_after = pa.rating; match.k_factor_used = None; match.reported_at = datetime.utcnow()
                                 match.a_faction = a_faction; match.b_faction = None
-                                s2.add(match); s2.commit(); st.success("BYE recorded (no rating change).")
+                                s2.add(match); s2.commit(); invalidate_caches(); st.success("BYE recorded (no rating change).")
                             else:
                                 k = 10 if k_choice.startswith("Casual") else 40; score_a = 1.0 if result == "a_win" else 0.0 if result == "b_win" else 0.5
                                 new_a, new_b = update_elo(pa.rating, pb.rating, score_a, k)
                                 match.result = result; match.a_rating_after = new_a; match.b_rating_after = new_b; match.k_factor_used = int(k); match.reported_at = datetime.utcnow(); match.a_faction = a_faction; match.b_faction = b_faction
-                                pa.rating = new_a; pb.rating = new_b; s2.add(pa); s2.add(pb); s2.add(match); s2.commit(); st.success(f"Saved result (K={k}).")
+                                pa.rating = new_a; pb.rating = new_b; s2.add(pa); s2.add(pb); s2.add(match); s2.commit(); invalidate_caches(); st.success(f"Saved result (K={k}).")
 
 # =============== Players (admin) ===============
 if st.session_state.get("is_admin", False) and "Players" in idx:
@@ -620,6 +634,7 @@ if st.session_state.get("is_admin", False) and "Players" in idx:
                         pl = s.get(Player, pid)
                         pl.faction = None if new_faction == "— None —" else new_faction
                         s.add(pl); s.commit()
+                    invalidate_caches()
                     st.success("Faction updated.")
         with st.expander("Archive / Restore Player", expanded=False):
                     with Session(engine) as s:
@@ -637,11 +652,13 @@ if st.session_state.get("is_admin", False) and "Players" in idx:
                             if p and p.active and st.button("Archive", use_container_width=True, key="btn_archive_player"):
                                 with Session(engine) as s:
                                     p = s.get(Player, pid); p.active = False; s.add(p); s.commit()
+                                invalidate_caches()
                                 st.success("Archived."); st.rerun()
                         with c2:
                             if p and (not p.active) and st.button("Restore", use_container_width=True, key="btn_restore_player"):
                                 with Session(engine) as s:
                                     p = s.get(Player, pid); p.active = True; s.add(p); s.commit()
+                                invalidate_caches()
                                 st.success("Restored."); st.rerun()
         with st.expander("Delete Player (permanent)", expanded=False):
                     with Session(engine) as s:
@@ -680,6 +697,7 @@ if st.session_state.get("is_admin", False) and "Players" in idx:
                                 if pl:
                                     s.delete(pl); s.commit()
                                     recalc_all_ratings(engine)
+                                    invalidate_caches()
                                     st.success("Player deleted permanently."); st.rerun()
 # =============== Pairings (admin) ===============
 if st.session_state.get("is_admin", False) and "Pairings" in idx:
@@ -709,6 +727,7 @@ if st.session_state.get("is_admin", False) and "Pairings" in idx:
                         if include_reported or m.result == "pending":
                             s.delete(m)
                     s.commit()
+                invalidate_caches()
                 st.success("Deleted matches. Use 'Generate pairings' to recreate."); st.rerun()
 
         # Week results password (compact)
@@ -716,26 +735,29 @@ if st.session_state.get("is_admin", False) and "Pairings" in idx:
             existing_pw = week_password(s, week_str)
         with st.expander("Week results password", expanded=False):
             st.caption("Lock this week's result submissions behind a password.")
-            pw_new = st.text_input("New password", type="password", key="wk_pw_new")
+            with st.form('week_password_form'):
+                pw_new = st.text_input("New password", type="password")
+                set_pw = st.form_submit_button("Set / Update password")
+                clear_pw = st.form_submit_button("Clear password")
             cols_pw = st.columns([1,1,1])
             with cols_pw[0]:
-                if st.button("Set / Update password", key="btn_set_wk_pw"):
+                if set_pw:
                     with Session(engine) as s:
                         try:
                             _val = (pw_new or "").strip()
                             if _val:
                                 set_week_password(s, week_str, _val)
-                                st.success("Password set/updated.")
+                                invalidate_caches(); st.success("Password set/updated.")
                             else:
                                 clear_week_password(s, week_str)
-                                st.success("Password cleared.")
+                                invalidate_caches(); st.success("Password cleared.")
                         except Exception as e:
                             st.error(f"Error updating password: {e}")
             with cols_pw[1]:
-                if st.button("Clear password", key="btn_clear_wk_pw"):
+                if clear_pw:
                     with Session(engine) as s:
                         clear_week_password(s, week_str)
-                    st.success("Password cleared.")
+                    invalidate_caches(); st.success("Password cleared.")
             with cols_pw[2]:
                 st.metric("Current status", "Set" if existing_pw else "Not set")
 
@@ -747,21 +769,25 @@ if st.session_state.get("is_admin", False) and "Pairings" in idx:
         labels = [f"{p.name} (ID {p.id}, {round(p.rating,1)})" for p in active_players]
         map_id = {labels[i]: active_players[i].id for i in range(len(active_players))}
         defaults = [lbl for lbl in labels if map_id[lbl] in already_present]
-        sel = st.multiselect("Players present this week", labels, default=defaults); selected_ids = {map_id[lbl] for lbl in sel}
+        with st.form('attendance_form'):
+            sel = st.multiselect("Players present this week", labels, default=defaults)
+            selected_ids = {map_id[lbl] for lbl in sel}
+            save_att = st.form_submit_button("Save attendance")
+            clear_att = st.form_submit_button("Clear attendance")
         a1, a2 = st.columns(2)
         with a1:
-            if st.button("Save attendance", key="btn_save_attendance"):
+            if save_att:
                 with Session(engine) as s:
                     existing = s.exec(select(Attendance).where(Attendance.week == week_str)).all()
                     for r in existing: s.delete(r)
                     for pid in selected_ids: s.add(Attendance(week=week_str, player_id=pid, present=True))
-                    s.commit(); st.success("Attendance saved.")
+                    s.commit(); invalidate_caches(); st.success("Attendance saved.")
         with a2:
-            if st.button("Clear attendance", key="btn_clear_attendance"):
+            if clear_att:
                 with Session(engine) as s:
                     existing = s.exec(select(Attendance).where(Attendance.week == week_str)).all()
                     for r in existing: s.delete(r)
-                    s.commit(); st.success("Attendance cleared.")
+                    s.commit(); invalidate_caches(); st.success("Attendance cleared.")
 
         if generate:
             with Session(engine) as s:
@@ -771,6 +797,7 @@ if st.session_state.get("is_admin", False) and "Pairings" in idx:
                     attendance_ids = {r.player_id for r in s.exec(select(Attendance).where(Attendance.week == week_str)).all() if r.present}
                     restrict = attendance_ids if attendance_ids else None
                     created = generate_weekly_pairings(s, week_str, restrict_to=restrict)
+                    invalidate_caches()
                     st.success(f"Created {len(created)} matches." if created else "No players to pair.")
 
         st.divider(); st.subheader("Weekly Pairings")
@@ -790,9 +817,11 @@ if st.session_state.get("is_admin", False) and "Pairings" in idx:
                 label = f"#{mm.id}: {a.name if a else mm.player_a_id} vs {b.name if b else 'BYE'} — result={mm.result}"
                 options[label] = mm.id
             if options:
-                sel_labels = st.multiselect("Select pairings to delete", list(options.keys()), key="delete_sel_inline")
-                selected_ids = [options[l] for l in sel_labels]
-                if st.button("Delete selected pairings", key="btn_delete_inline"):
+                with st.form('delete_pairings_form'):
+                    sel_labels = st.multiselect("Select pairings to delete", list(options.keys()))
+                    selected_ids = [options[l] for l in sel_labels]
+                    submit_del = st.form_submit_button("Delete selected pairings")
+                if submit_del:
                     with Session(engine) as s:
                         for mid in selected_ids:
                             m = s.get(Match, mid)
@@ -801,6 +830,7 @@ if st.session_state.get("is_admin", False) and "Pairings" in idx:
                                 continue
                             s.delete(m)
                         s.commit()
+                    invalidate_caches()
                     st.success(f"Deleted {len(selected_ids)} pairing(s). ")
                     st.rerun()
             else:
@@ -823,9 +853,11 @@ if st.session_state.get("is_admin", False) and "Pairings" in idx:
             st.code(", ".join(f"{pid}:{eligible_names[pid]}" for pid in eligible_ids))
         else:
             st.info("No eligible players (check attendance).")
-        manual_order = st.text_input("Manual pairing order (IDs)", placeholder="e.g. 7,12,3,9,18,21 or 7,12,3 (BYE)")
-        clear_pending = st.checkbox("Clear existing pending matches for this week before applying", value=True)
-        if st.button("Apply manual pairings", key="btn_apply_manual"):
+        with st.form('manual_pairings_form'):
+            manual_order = st.text_input("Manual pairing order (IDs)", placeholder="e.g. 7,12,3,9,18,21 or 7,12,3 (BYE)")
+            clear_pending = st.checkbox("Clear existing pending matches for this week before applying", value=True)
+            apply_manual = st.form_submit_button("Apply manual pairings")
+        if apply_manual:
             tokens = [t.strip().upper() for t in manual_order.split(",") if t.strip()]
             ids: List[int] = []
             has_bye_token = False
@@ -911,8 +943,7 @@ if st.session_state.get("is_admin", False) and "Ad-Hoc Match" in idx:
                     new_a, new_b = update_elo(pa.rating, pb.rating, score_a, k)
                     m.result = result2; m.a_rating_after = new_a; m.b_rating_after = new_b; m.k_factor_used = int(k); m.reported_at = datetime.utcnow()
                     pa.rating = new_a; pb.rating = new_b; s3.add(pa); s3.add(pb); s3.add(m); s3.commit()
-                    st.success(f"Ad-hoc match saved (K={k}). Match {m.id}.")
-                    pa.rating = new_a; pb.rating = new_b; s3.add(pa); s3.add(pb); s3.add(m); s3.commit()
+                    invalidate_caches()
                     st.success(f"Ad-hoc match saved (K={k}). Match {m.id}.")
 
 
