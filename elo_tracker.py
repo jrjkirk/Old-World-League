@@ -655,6 +655,42 @@ def _wdl_map_via_db() -> dict[int, tuple[int,int,int]]:
     except Exception:
         return {}
 
+
+# --- Single-call Leaderboard fetch (id, name, rating, wins, draws, losses) ---
+@st.cache_data(ttl=60, show_spinner=False)
+def _fetch_leaderboard_rows():
+    """Return a list of rows from public.leaderboard_rows(), or [] on failure.
+    Each row has keys: id, name, rating, wins, draws, losses.
+    """
+    try:
+        from sqlalchemy import text as _sqltext
+        with Session(engine) as _s:
+            rows = _s.exec(_sqltext("select * from public.leaderboard_rows()")).all()
+        out = []
+        for r in rows:
+            try:
+                out.append({
+                    "id": int(r.id),
+                    "name": r.name,
+                    "rating": float(r.rating) if r.rating is not None else None,
+                    "wins": int(r.wins or 0),
+                    "draws": int(r.draws or 0),
+                    "losses": int(r.losses or 0),
+                })
+            except Exception:
+                rid, name, rating, w, d, l = r
+                out.append({
+                    "id": int(rid),
+                    "name": name,
+                    "rating": float(rating) if rating is not None else None,
+                    "wins": int(w or 0),
+                    "draws": int(d or 0),
+                    "losses": int(l or 0),
+                })
+        return out
+    except Exception:
+        return []
+
 with T[idx["Leaderboard"]]:
     st.subheader("Leaderboard")
     show_archived = st.checkbox("Include archived players", value=False, key="lb_arch")
@@ -663,7 +699,14 @@ with T[idx["Leaderboard"]]:
         if not show_archived:
             q = q.where(Player.active == True)
         players = s.exec(q.order_by(Player.rating.desc())).all()
-        records = _wdl_map_via_db()
+        
+rows_lead = _fetch_leaderboard_rows()
+if rows_lead:
+    # Build records dict from single-call results (UI expects {id: (w,d,l)})
+    records = {r["id"]: (r["wins"], r["draws"], r["losses"]) for r in rows_lead}
+else:
+    records = _wdl_map_via_db()
+
     if players:
         pref_map = faction_preference_map()
         rows = [
