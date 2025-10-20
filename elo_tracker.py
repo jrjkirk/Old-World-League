@@ -953,51 +953,50 @@ if st.session_state.get("is_admin", False) and "Players" in idx:
                                     p = s.get(Player, pid); p.active = True; s.add(p); s.commit()
                                 invalidate_caches()
                                 st.success("Restored."); st.rerun()
-
-with st.expander("Delete Player (permanent)", expanded=False):
-    with Session(engine) as s:
-        del_players = s.exec(select(Player).order_by(Player.name)).all()
-    if not del_players:
-        st.info("No players to delete.")
-    else:
-        del_map = {f"{p.name} (ID {p.id})": p.id for p in del_players}
-        sel_label = st.selectbox("Select player to delete", list(del_map.keys()), key="del_player_sel")
-        sel_id = del_map[sel_label]
-        with Session(engine) as s:
-            m_count = s.exec(select(Match).where((Match.player_a_id == sel_id) | (Match.player_b_id == sel_id))).all()
-            a_count = s.exec(select(Attendance).where(Attendance.player_id == sel_id)).all()
-            matches_num = len(m_count)
-            attend_num = len(a_count)
-        st.write(f"Related records — Matches: **{matches_num}**, Attendance: **{attend_num}**.")
-        with st.form("delete_player_now_form", clear_on_submit=False):
-            col_del1, col_del2 = st.columns([1,2])
-            with col_del1:
-                hard_delete = st.checkbox("Also delete all related matches & attendance", value=False, key="del_player_hard")
-            with col_del2:
-                confirm_text = st.text_input('Type **DELETE** to confirm', key="del_player_confirm")
-            submitted_delete = st.form_submit_button("Delete player now", type="primary", key="btn_delete_player_now")
-        if submitted_delete:
-            if confirm_text.strip().upper() != "DELETE":
-                st.error("Type DELETE to confirm.")
+        with st.expander("Delete Player (permanent)", expanded=False):
+            with Session(engine) as s:
+                del_players = s.exec(select(Player).order_by(Player.name)).all()
+            if not del_players:
+                st.info("No players to delete.")
             else:
+                del_map = {f"{p.name} (ID {p.id})": p.id for p in del_players}
+                sel_label = st.selectbox("Select player to delete", list(del_map.keys()), key="del_player_sel")
+                sel_id = del_map[sel_label]
                 with Session(engine) as s:
-                    if hard_delete:
-                        for mm in s.exec(select(Match).where((Match.player_a_id == sel_id) | (Match.player_b_id == sel_id))).all():
-                            s.delete(mm)
-                        for aa in s.exec(select(Attendance).where(Attendance.player_id == sel_id)).all():
-                            s.delete(aa)
-                        s.commit()
+                    m_count = s.exec(select(Match).where((Match.player_a_id == sel_id) | (Match.player_b_id == sel_id))).all()
+                    a_count = s.exec(select(Attendance).where(Attendance.player_id == sel_id)).all()
+                    matches_num = len(m_count)
+                    attend_num = len(a_count)
+                st.write(f"Related records — Matches: **{matches_num}**, Attendance: **{attend_num}**.")
+                with st.form("delete_player_now_form", clear_on_submit=False):
+                    col_del1, col_del2 = st.columns([1,2])
+                    with col_del1:
+                        hard_delete = st.checkbox("Also delete all related matches & attendance", value=False, key="del_player_hard")
+                    with col_del2:
+                        confirm_text = st.text_input('Type **DELETE** to confirm', key="del_player_confirm")
+                    submitted_delete = st.form_submit_button("Delete player now", type="primary", key="btn_delete_player_now")
+                if submitted_delete:
+                    if confirm_text.strip().upper() != "DELETE":
+                        st.error("Type DELETE to confirm.")
                     else:
-                        m_exists = s.exec(select(Match).where((Match.player_a_id == sel_id) | (Match.player_b_id == sel_id))).first()
-                        a_exists = s.exec(select(Attendance).where(Attendance.player_id == sel_id)).first()
-                        if m_exists or a_exists:
-                            st.error("Player has related matches/attendance. Tick the checkbox to delete them too, or archive instead."); st.stop()
-                    pl = s.get(Player, sel_id)
-                    if pl:
-                        s.delete(pl); s.commit()
-                        recalc_all_ratings(engine)
-                        invalidate_caches()
-                        st.success("Player deleted permanently."); st.rerun()
+                        with Session(engine) as s:
+                            if hard_delete:
+                                for mm in s.exec(select(Match).where((Match.player_a_id == sel_id) | (Match.player_b_id == sel_id))).all():
+                                    s.delete(mm)
+                                for aa in s.exec(select(Attendance).where(Attendance.player_id == sel_id)).all():
+                                    s.delete(aa)
+                                s.commit()
+                            else:
+                                m_exists = s.exec(select(Match).where((Match.player_a_id == sel_id) | (Match.player_b_id == sel_id))).first()
+                                a_exists = s.exec(select(Attendance).where(Attendance.player_id == sel_id)).first()
+                                if m_exists or a_exists:
+                                    st.error("Player has related matches/attendance. Tick the checkbox to delete them too, or archive instead."); st.stop()
+                            pl = s.get(Player, sel_id)
+                            if pl:
+                                s.delete(pl); s.commit()
+                                recalc_all_ratings(engine)
+                                invalidate_caches()
+                                st.success("Player deleted permanently."); st.rerun()
 
 # =============== Pairings (admin) ===============
 if st.session_state.get("is_admin", False) and "Pairings" in idx:
