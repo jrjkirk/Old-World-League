@@ -1,19 +1,6 @@
 
 """
-Old World League ELO Tracker — streamlined, stable build
-- Sticky header, dark theme
-- Admin sidebar + Element Games sponsor
-- Tabs: Leaderboard, Data, Enter Results (+ Players, Pairings, Ad-Hoc Match for admin)
-
-Includes:
-1) Correct loss counting in player_record.
-2) Manual pairing editor (admin) with optional BYE token.
-3) Delete no-show pairings inline under Weekly Pairings.
-4) UK date format (DD/MM/YYYY) and Week ID = Wednesday of the week.
-5) Ad-Hoc Match moved to its own admin-only tab.
-6) Reset controls moved under Generate Pairings.
-7) Player Faction (NEW): choose a faction when adding a player and edit it later in a collapsible panel.
-   Uses the same placeholder factions as match entry: "faction 1", "faction 2", "faction 3".
+Old World League ELO Tracker
 """
 from __future__ import annotations
 from datetime import datetime, date, timedelta
@@ -34,7 +21,7 @@ ADMIN_PASSWORD = st.secrets.get("ADMIN_PASSWORD", os.getenv("ADMIN_PASSWORD", "c
 LOGO_URL = st.secrets.get("LOGO_URL", os.getenv("LOGO_URL", ""))
 LOGO_WIDTH = int(st.secrets.get("LOGO_WIDTH", os.getenv("LOGO_WIDTH", 120)))
 
-# Placeholder factions (same as existing usage elsewhere)
+# Placeholder factions
 PLACEHOLDER_FACTIONS: List[str] = ['Empire of Man', 'Dwarfen Mountain Holds', 'Kingdom of Bretonnia', 'Wood Elf Realms', 'High Elf Realms', 'Orc & Goblin Tribes', 'Warriors of Chaos', 'Beastmen Brayheards', 'Tomb Kings of Khemri', 'Skaven', 'Ogre Kingdoms', 'Lizardmen', 'Chaos Dwarfs', 'Dark Elves', 'Daemons of Chaos', 'Vampire Counts']
 PLACEHOLDER_FACTIONS_WITH_BLANK: List[str] = ["— None —", *PLACEHOLDER_FACTIONS]
 
@@ -172,7 +159,6 @@ def _player_id(p) -> int:
 
 
 def invalidate_caches():
-    """Clear cached data and trigger a background re-warm so the next rerun is fast."""
     try:
         st.cache_data.clear()
     except Exception:
@@ -189,7 +175,6 @@ def invalidate_caches():
 # ---- Cached fetchers (performance, non-functional) ----
 @st.cache_data(ttl=300)
 def list_players_snapshot(include_arch: bool) -> list[dict]:
-    """Lightweight snapshot for player selects."""
     with Session(engine) as s:
         q = select(Player)
         if not include_arch:
@@ -320,11 +305,6 @@ def list_nonpending_recent() -> list[Match]:
 
 @st.cache_resource(show_spinner=False)
 def warm_caches_async(nonce: int = 0):
-    """Pre-populate frequently used @st.cache_data queries in parallel.
-
-    The 'nonce' parameter allows forcing a re-warm after mutations; changing it
-    invalidates this cached resource so the function runs again.
-    """
     try:
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=4) as ex:
@@ -348,10 +328,6 @@ def _score_from_result(result: str) -> float:
     return 0.5  # draw/other
 
 def recalc_all_ratings(engine) -> None:
-    """Reset all player ratings to base and replay every completed match in order.
-    Also refresh per-match before/after snapshots and k_factor_used for consistency.
-    Safe on SQLite or Postgres.
-    """
     from sqlmodel import Session, select
     from sqlalchemy import asc
     with Session(engine) as s:
@@ -401,10 +377,6 @@ def recalc_all_ratings(engine) -> None:
         s.commit()
 
 def most_played_faction(session: Session, player_id: int) -> Optional[str]:
-    """Return the faction this player has most often played in recorded matches.
-    Counts any non-empty faction string (no dependency on global constants).
-    If no recorded factions, returns None.
-    """
     counts: Dict[str, int] = {}
     # Count appearances as A
     for m in session.exec(select(Match).where(Match.player_a_id == player_id)).all():
@@ -422,7 +394,6 @@ def most_played_faction(session: Session, player_id: int) -> Optional[str]:
 
 # =============== Week password utility ===============
 def week_password(session: Session, week: str) -> Optional[str]:
-    """Return the results password for a given week, or None if not set."""
     row = session.exec(select(WeekKey).where(WeekKey.week == week)).first()
     return row.results_password if row else None
 
@@ -430,7 +401,6 @@ def uk_date_str(d: date) -> str:
     return d.strftime("%d/%m/%Y")
 
 def week_id_wed(d: date) -> str:
-    """Return UK-formatted date string for the Wednesday of the week containing d."""
     # Monday=0 ... Sunday=6; Wednesday is 2
     offset = 2 - d.weekday()
     wednesday = d + timedelta(days=offset)
@@ -479,9 +449,6 @@ def fetch_past_pairs(session: Session) -> Set[tuple[int, int]]:
     return s
 
 def generate_weekly_pairings(session: Session, week: str, restrict_to: Optional[Set[int]] = None):
-    """Greedy pairing: sort by rating desc, avoid repeats when possible, fallback to next available.
-    Creates Match rows (pending). Returns list of created Match objects.
-    """
     q = select(Player).where(Player.active == True).order_by(Player.rating.desc())
     players = session.exec(q).all(); ids = [p.id for p in players]
     if restrict_to: ids = [i for i in ids if i in restrict_to]
@@ -680,10 +647,6 @@ def _wdl_map_via_db() -> dict[int, tuple[int,int,int]]:
 # --- Single-call Leaderboard fetch (id, name, rating, wins, draws, losses) ---
 @st.cache_data(ttl=60, show_spinner=False)
 def _fetch_leaderboard_rows():
-    """Return a list of rows from public.leaderboard_rows(), or [] on failure.
-    Each row has keys: id, name, rating, wins, draws, losses.
-    We use only wins/draws/losses here to keep UI identical.
-    """
     try:
         from sqlalchemy import text as _sqltext
         with Session(engine) as _s:
@@ -794,9 +757,6 @@ with T[idx["Data"]]:
         } for m in matches]
         st.dataframe(rows, use_container_width=True, hide_index=True, column_config={"Rating": st.column_config.NumberColumn(format="%.1f"), "GP": st.column_config.NumberColumn(format="%d"), "W": st.column_config.NumberColumn(format="%d"), "D": st.column_config.NumberColumn(format="%d"), "L": st.column_config.NumberColumn(format="%d")})
     else: st.info("No matches recorded yet.")
-
-# =============== Enter Results ===============
-
 
 # =============== Week password helpers ===============
 def set_week_password(session: Session, week: str, password: Optional[str]) -> None:
